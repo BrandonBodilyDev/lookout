@@ -1,0 +1,24 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+
+# Node
+node_modules/
+web/dist/
+*.log
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Local-only: job-search notes and research about the employer stay off the public repo.
+CLAUDE.md
+docs/plan.md
+docs/research.md
+docs/research/
+docs/interview-prep.md
+docs/baxter-jd-*.md

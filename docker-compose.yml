@@ -1,0 +1,21 @@
+# One command brings up the whole Phase 0 demo:  docker compose up --build
+# Dashboard: http://localhost:8080
+services:
+  api:
+    build:
+      context: .
+      dockerfile: src/Lookout.Api/Dockerfile
+    volumes:
+      - ./scenarios:/app/scenarios:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"]
+      interval: 10s
+      retries: 5
+
+  web:
+    build:
+      context: web
+    ports:
+      - "8080:80"
+    depends_on:
+      - api

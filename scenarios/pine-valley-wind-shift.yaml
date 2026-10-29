@@ -1,0 +1,108 @@
+# Lookout demo scenario: a 90-degree wind shift cuts off an uphill escape route.
+#
+# Fictional incident on real terrain: pinyon-juniper hills between Veyo and Pine Valley,
+# north of St. George, Utah. Route elevations are USGS 3DEP values from the Elevation Point
+# Query Service (epqs.nationalmap.gov), sampled 2026-10-28. Coordinates are [lon, lat].
+#
+# Story: the fire ignites at 13:30 and backs and flanks under a light north wind. At 14:20 the
+# wind swings 90 degrees to the west, as it did at Yarnell Hill (2013), and the head turns east
+# toward Crew Alpha's work site and the start of their escape route. Lookout only knows the
+# wind observed right now, so the first time it can see the threat is the moment of the shift.
+# Crew Bravo is safe from the fire but drops off the link for 17 minutes.
+
+id: pine-valley-wind-shift
+name: Pine Valley wind shift
+description: >-
+  A 90-degree wind shift at 14:20 turns the fire's head toward Crew Alpha. Lookout must
+  warn them in time to walk their uphill escape route to the safety zone. Crew Bravo
+  loses comms for 17 minutes.
+start: "2026-07-14T14:00:00-06:00"
+duration_min: 45
+step_min: 0.5
+origin: { lon: -113.620, lat: 37.360 }
+
+fire:
+  ignition: [-113.630172, 37.358203]
+  ignition_min: -30          # ignited 13:30, 30 minutes before the scenario opens
+
+# Piecewise-constant weather. midflame_wind_ms shapes the ellipse (FARSITE eq. 13);
+# head_rate_m_per_min is an input, from the sourced ranges in docs/assumptions.md.
+wind:
+  - { start_min: -30, from_deg: 0,   midflame_wind_ms: 3.0, head_rate_m_per_min: 20 }
+  - { start_min: 20,  from_deg: 270, midflame_wind_ms: 6.0, head_rate_m_per_min: 105 }
+
+safety_zones:
+  - id: SZ-1
+    name: Upper bench clearing
+    polygon:
+      - [-113.614688, 37.366558]
+      - [-113.612654, 37.366558]
+      - [-113.612654, 37.368175]
+      - [-113.614688, 37.368175]
+  - id: SZ-2
+    name: North wash two-track
+    polygon:
+      - [-113.629833, 37.371768]
+      - [-113.628024, 37.371768]
+      - [-113.628024, 37.373205]
+      - [-113.629833, 37.373205]
+
+# Escape routes as the IC drew them: [lon, lat, ground elevation m]. Each ends in its safety zone.
+routes:
+  - id: ER-1
+    name: Alpha ridge trail (uphill)
+    safety_zone: SZ-1
+    vertices:
+      - [-113.620000, 37.359102, 1582.3]
+      - [-113.618305, 37.361347, 1609.1]
+      - [-113.616609, 37.363593, 1614.5]
+      - [-113.614914, 37.365839, 1655.1]
+      - [-113.613784, 37.367186, 1660.1]
+  - id: ER-2
+    name: Bravo wash (downhill)
+    safety_zone: SZ-2
+    vertices:
+      - [-113.630172, 37.368085, 1624.1]
+      - [-113.629607, 37.370331, 1572.5]
+      - [-113.629041, 37.372127, 1552.1]
+
+# Crew truth tracks: [minute, lon, lat], interpolated. The engine never sees these directly,
+# only the fixes sampled from them every fix_interval_s, minus any comms gaps.
+crews:
+  - id: ALPHA
+    name: Crew Alpha (Type 2 IA)
+    route: ER-1
+    pace: moderate
+    size: 20
+    fix_interval_s: 60
+    track:
+      - [0.0,  -113.620000, 37.359102]
+      - [21.5, -113.620000, 37.359102]   # crew gets the alert at 14:20, moves out at 14:21:30
+      - [25.4, -113.618305, 37.361347]
+      - [29.0, -113.616609, 37.363593]
+      - [33.2, -113.614914, 37.365839]
+      - [35.4, -113.613784, 37.367186]   # inside SZ-1
+      - [45.0, -113.613784, 37.367186]
+    comms_gaps: []
+  - id: BRAVO
+    name: Crew Bravo (hand crew)
+    route: ER-2
+    pace: moderate
+    size: 20
+    fix_interval_s: 60
+    track:
+      - [0.0,  -113.630172, 37.368085]
+      - [45.0, -113.630172, 37.368085]
+    comms_gaps:
+      - [2, 19]                          # no fixes received between 14:02 and 14:19
+
+alerts:
+  buffer_min: 10
+  watch_min: 30
+  warning_min: 15
+  critical_min: 5
+  comms_stale_min: 5
+  comms_lost_min: 15
+  unburned_fuel_distance_m: 500
+  unburned_fuel_half_angle_deg: 45
+  off_trail_factor: 0.5
