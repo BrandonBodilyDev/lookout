@@ -80,7 +80,7 @@ The fire front can come from a drone instead of the scenario. The pipeline, in [
 
 1. **Track.** Read the DJI subtitle track: one GPS fix and height per second on the original Mavic Mini, longitude first, 4 decimal places (about 11 m). ffmpeg extracts it from the MP4.
 2. **Pose.** Heading and gimbal pitch are not in the subtitle track. They come from an Airdata-style flight-log CSV, or are given on the command line for a straight-down survey.
-3. **Detect.** Find fire in each frame. The default detector needs no trained weights: flame pixels must pass the RGB rule of Chen et al. (2004) and the chrominance rule of Celik and Demirel (2009). The chrominance rule is there because Chen's rule alone accepts dry tan grass, which covers most of the ground in desert scrub. A DETR-family ONNX model can be used instead, run through ONNX Runtime in .NET.
+3. **Detect.** Find fire in each frame. The default detector needs no trained weights: flame pixels must pass the RGB rule of Chen et al. (2004) and the chrominance rule of Celik and Demirel (2009). The chrominance rule is there because Chen's rule alone accepts dry tan grass, which covers most of the ground in desert scrub. A DETR-family ONNX model can be used instead, run through ONNX Runtime in .NET. That path is tested with a tiny generated model that has the same interface as an RF-DETR export; real weights have not been run yet.
 4. **Project.** Turn fire pixels into ground positions with a pinhole camera model, intersecting each ray with the terrain grid.
 5. **Map.** Mark burned cells on the 30 m grid, accumulate them across frames, and polygonize. The result is the same fire-front message the engine already consumes, and it can be published straight into a live incident.
 

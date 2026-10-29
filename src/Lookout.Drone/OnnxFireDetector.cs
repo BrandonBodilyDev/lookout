@@ -10,8 +10,9 @@ namespace Lookout.Drone;
 /// Expected graph, as produced by RF-DETR's ONNX export: one image input [1, 3, H, W], RGB scaled
 /// to 0-1 and normalised with ImageNet mean and standard deviation; one output of boxes
 /// [1, N, 4] as (cx, cy, w, h) normalised to 0-1; one output of class logits [1, N, C].
-/// The input size is read from the model. Not verified against a downloaded model in this repo:
-/// check the input and output names your export prints before relying on it.
+/// The input size is read from the model. Graph handling, thresholding and box-to-pixel mapping are
+/// tested against a tiny model with this interface (tools/make_test_detector.py). Real RF-DETR
+/// weights have not been run in this repo: check the input and output shapes your export prints.
 ///
 /// Recommended weights are Apache-2.0 (for example fireviewer/rfdetr-medium-probable-fire-v2.5).
 /// Ultralytics YOLO weights are AGPL-3.0 and would change this project's licence.

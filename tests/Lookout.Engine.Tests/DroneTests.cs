@@ -225,3 +225,39 @@ public class VideoSurveyTests
         throw new DirectoryNotFoundException();
     }
 }
+
+/// <summary>
+/// The ONNX path, without real weights: a tiny model with the RF-DETR export interface that always
+/// returns one confident box (top-left) and one low-score box (bottom-right). Built by
+/// tools/make_test_detector.py.
+/// </summary>
+public class OnnxDetectorTests
+{
+    [Fact]
+    public void Reads_the_graph_thresholds_scores_and_maps_boxes_to_pixels()
+    {
+        var model = Path.Combine(AppContext.BaseDirectory, "fixtures", "onnx", "tiny-detector.onnx");
+        using var detector = new OnnxFireDetector(model, threshold: 0.4f);
+        Assert.Contains("64x64", detector.Name); // input size read from the model
+
+        var frame = new RgbImage(100, 100);
+        var mask = detector.Detect(frame);
+
+        // Box 1: centre (25, 25), 20 x 20 px, score 0.95 -> pixels 15..35 inclusive.
+        Assert.True(mask[25, 25]);
+        Assert.True(mask[15, 15]);
+        Assert.True(mask[35, 35]);
+        Assert.False(mask[14, 25]);
+        Assert.Equal(21 * 21, mask.Count);
+        // Box 2: score 0.05, under the threshold.
+        Assert.False(mask[75, 75]);
+    }
+
+    [Fact]
+    public void Class_filter_can_exclude_every_detection()
+    {
+        var model = Path.Combine(AppContext.BaseDirectory, "fixtures", "onnx", "tiny-detector.onnx");
+        using var detector = new OnnxFireDetector(model, threshold: 0.4f, fireClasses: [1]);
+        Assert.Equal(0, detector.Detect(new RgbImage(100, 100)).Count);
+    }
+}
