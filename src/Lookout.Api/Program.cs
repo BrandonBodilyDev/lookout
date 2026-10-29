@@ -85,6 +85,7 @@ if (live)
     builder.Services.AddScoped<IncidentService>();
     builder.Services.AddSingleton<IncidentSignals>();
     builder.Services.AddSingleton<LiveSnapshots>();
+    builder.Services.AddSingleton<DeviceActivity>();
     builder.Services.AddSingleton(config.GetSection("Lookout:Live").Get<LiveOptions>() ?? new LiveOptions());
     // No broker configured means loopback mode: the engine runs, nothing leaves the server.
     builder.Services.AddSingleton(new BrokerConfig(config.GetSection("Lookout:Mqtt").Get<MqttSettings>() is { Host.Length: > 0 } m ? m : null));

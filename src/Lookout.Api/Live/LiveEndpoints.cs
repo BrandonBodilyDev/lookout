@@ -44,6 +44,16 @@ public static class LiveEndpoints
                 }));
         }
 
+        // Devices reporting in the last 30 minutes that no incident has: a crew switched on a messenger
+        // nobody assigned. Their reports are being dropped, so the IC needs to see them.
+        app.MapGet("/api/devices/unassigned", async (LookoutDb db, DeviceActivity activity, CancellationToken ct) =>
+        {
+            var heard = activity.HeardWithin(TimeSpan.FromMinutes(30));
+            var ids = heard.Select(h => h.DeviceId).ToList();
+            var assigned = (await db.Devices.AsNoTracking().Where(d => ids.Contains(d.DeviceId)).Select(d => d.DeviceId).ToListAsync(ct)).ToHashSet();
+            return heard.Where(h => !assigned.Contains(h.DeviceId));
+        }).RequireAuthorization(Policies.Command);
+
         var api = app.MapGroup("/api/incidents").AddEndpointFilter<ProblemFilter>().AddEndpointFilter<CrewIncidentScope>();
 
         api.MapPost("/", async (CreateIncident r, IncidentService svc, IncidentSignals signals, HttpContext http, CancellationToken ct) =>
@@ -193,6 +203,16 @@ public static class LiveEndpoints
             if (from is not null && from.IncidentId != id) signals.Post(new DevicesChanged(from.IncidentId));
             return Results.Ok(new { deviceId, incidentId = id, crewId });
         }).RequireAuthorization(Policies.Command);
+
+        // The incident's devices with when each was last heard: is the crew's link alive?
+        api.MapGet("/{id:guid}/devices", async (Guid id, LookoutDb db, DeviceActivity activity, CancellationToken ct) =>
+            (await db.Devices.AsNoTracking().Where(d => d.IncidentId == id).OrderBy(d => d.CrewId).ThenBy(d => d.DeviceId).ToListAsync(ct))
+                .Select(d =>
+                {
+                    var heard = activity.Get(d.DeviceId);
+                    return new { d.DeviceId, d.CrewId, d.AssignedAt, d.AssignedBy, LastHeard = heard?.LastHeard, heard?.BatteryPercent };
+                }))
+            .RequireAuthorization(Policies.Read);
 
         api.MapDelete("/{id:guid}/crews/{crewId}/devices/{deviceId}", async (Guid id, string crewId, string deviceId, LookoutDb db,
             IncidentSignals signals, TimeProvider clock, HttpContext http, CancellationToken ct) =>

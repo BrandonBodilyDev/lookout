@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Lookout.Api.Data;
+using Lookout.Api.Live;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -120,6 +121,35 @@ public sealed class DeviceTests(LookoutAppFixture fx)
         // One audit entry per successful assignment, none for the refused ones.
         Assert.Equal(results.Count(r => r.StatusCode == HttpStatusCode.OK),
             await db.AuditEvents.CountAsync(e => e.IncidentId == incident && e.Type == "device.assigned", ct));
+    }
+
+    [Fact]
+    public async Task A_device_heard_but_not_assigned_is_listed_until_it_is_assigned()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var incident = await CreateIncidentAsync();
+        var device = NewDeviceId();
+        var activity = fx.App.Services.GetRequiredService<DeviceActivity>();
+        activity.Heard(device, 77);
+        activity.Heard(device, null); // an ack: keeps the last known battery
+        var ic = fx.Client("ic");
+
+        var listed = (await ic.GetFromJsonAsync<JsonElement>("/api/devices/unassigned", ct)).EnumerateArray()
+            .Single(d => d.GetProperty("deviceId").GetString() == device);
+        Assert.Equal(77, listed.GetProperty("batteryPercent").GetInt32());
+        Assert.Equal(2, listed.GetProperty("messages").GetInt64());
+        Assert.Equal(HttpStatusCode.Forbidden, (await fx.Client("observer").GetAsync("/api/devices/unassigned", ct)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.OK, (await ic.PutAsync($"/api/incidents/{incident}/crews/ALPHA/devices/{device}", null, ct)).StatusCode);
+        Assert.DoesNotContain((await ic.GetFromJsonAsync<JsonElement>("/api/devices/unassigned", ct)).EnumerateArray(),
+            d => d.GetProperty("deviceId").GetString() == device);
+
+        // The incident's device list says when each was last heard; crews of the incident may read it.
+        var mine = await fx.Client("crew", "ALPHA", incident).GetFromJsonAsync<JsonElement>($"/api/incidents/{incident}/devices", ct);
+        var row = Assert.Single(mine.EnumerateArray());
+        Assert.Equal(device, row.GetProperty("deviceId").GetString());
+        Assert.Equal(77, row.GetProperty("batteryPercent").GetInt32());
+        Assert.NotEqual(JsonValueKind.Null, row.GetProperty("lastHeard").ValueKind);
     }
 
     [Fact]

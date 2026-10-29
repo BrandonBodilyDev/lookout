@@ -40,6 +40,7 @@ public sealed class LiveRunner(
     IncidentSignals signals,
     IHubContext<IncidentHub> hub,
     LiveSnapshots snapshots,
+    DeviceActivity activity,
     NwsClient nws,
     CotSender cot,
     Push.PushNotifier push,
@@ -225,6 +226,7 @@ public sealed class LiveRunner(
         // Crew devices: the registry, not the topic, says which incident and crew a device reports for.
         if (Topics.ParseDevice(topic) is { Up: true } dev)
         {
+            activity.Heard(dev.DeviceId, BatteryOf(payload));
             // Unknown at arrival but assigned since: it belonged to no crew then, so the current owner is safe.
             if (!(devicesAtArrival ?? _devices).TryGetValue(dev.DeviceId, out var owner) && !_devices.TryGetValue(dev.DeviceId, out owner))
             {
@@ -257,6 +259,13 @@ public sealed class LiveRunner(
                     rt.UpdateWind(rt.Wind with { HeadRateMPerMin = wx.HeadRateMPerMin }, rt.WindSource);
                 break;
         }
+    }
+
+    /// <summary>Battery from a position report; null for an ack or a malformed message (handled, and logged, later).</summary>
+    private static int? BatteryOf(byte[] payload)
+    {
+        try { return WireFormat.DecodeUplink(payload) is PositionReport p ? p.BatteryPercent : null; }
+        catch (FormatException) { return null; }
     }
 
     private async Task HandleUplinkAsync(IncidentRuntime rt, string crewId, byte[] payload, CancellationToken ct, string? deviceId = null)

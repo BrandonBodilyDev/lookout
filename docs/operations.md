@@ -45,7 +45,7 @@ IC_TOKEN=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"role":"ic",
 curl -X PUT -d "" -H "Authorization: Bearer $IC_TOKEN" http://localhost:8080/api/incidents/$INCIDENT/crews/ALPHA/devices/300434060012345
 ```
 
-Assigning a device that already belongs to another crew or incident moves it. `DELETE` on the same path unassigns it. Both are recorded in the audit trail. Reports from an unassigned device are dropped and logged once per device. The field simulator assigns one device per crew, named `SIM-{incident}-{crew}`.
+Assigning a device that already belongs to another crew or incident moves it. `DELETE` on the same path unassigns it. Both are recorded in the audit trail. Reports from an unassigned device are dropped and logged once per device. Devices heard in the last 30 minutes without an assignment are listed by `GET /api/devices/unassigned` and on the dashboard. Last-heard times are kept in memory, so they are blank after an API restart until each device reports again. The field simulator assigns one device per crew, named `SIM-{incident}-{crew}`.
 
 ## Backup and restore
 

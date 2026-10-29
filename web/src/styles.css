@@ -271,3 +271,6 @@ details.card[open] summary { margin-bottom: 8px; }
 .devices { margin: 4px 0 0; font-size: 12px; }
 .device-list { list-style: none; margin: 0 0 8px; padding: 0; }
 .device-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.device-heard { display: block; font-size: 11px; }
+.unassigned { border: 1px solid var(--border); border-left: 3px solid #d97706; border-radius: 6px; padding: 6px 10px; margin: 0 0 8px; font-size: 13px; }
+.unassigned p { margin: 0 0 4px; }

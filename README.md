@@ -66,7 +66,7 @@ During the live run of the demo:
 - Alpha's CRITICAL goes out on the update after the wind shift and is acknowledged by the crew's device seconds later.
 - If a crew never acknowledges a WARNING or CRITICAL, the alert escalates to the incident commander after 3 scenario minutes, and the IC can acknowledge on the crew's behalf.
 
-The field simulator assigns one simulated link device to each crew when it starts the incident. The incident commander can assign or remove devices from the dashboard; a crew with no device shows that its link alerts are waiting. Web Push to the crew's phones still goes out.
+The field simulator assigns one simulated link device to each crew when it starts the incident. The incident commander can assign or remove devices from the dashboard, which shows when each device was last heard and its battery. A device that reports without being assigned is listed there with one-click assignment, because its positions are being ignored. A crew with no device shows that its link alerts are waiting. Web Push to the crew's phones still goes out.
 
 ### The crew's phone
 
