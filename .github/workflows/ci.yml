@@ -28,6 +28,7 @@ jobs:
         with:
           global-json-file: global.json
       - run: dotnet tool restore
+      - run: dotnet restore src/Lookout.Api
       - name: Generate the reviewed release script
         run: dotnet ef migrations script --idempotent --project src/Lookout.Api -o release.sql
       - name: Start a fresh TimescaleDB with the runtime role

@@ -83,7 +83,20 @@ public sealed class MqttConnection(MqttSettings settings, string clientId, Actio
                 {
                     var sub = _factory.CreateSubscribeOptionsBuilder();
                     foreach (var t in _subscriptions) sub.WithTopicFilter(f => f.WithTopic(t).WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce));
-                    await _client.SubscribeAsync(sub.Build(), ct);
+                    try
+                    {
+                        var result = await _client.SubscribeAsync(sub.Build(), ct);
+                        // A broker ACL refuses topics per filter, not by failing the call: say so loudly.
+                        foreach (var item in result.Items.Where(i => (int)i.ResultCode > 2))
+                            log?.Invoke($"MQTT subscription to {item.TopicFilter.Topic} refused ({item.ResultCode})");
+                    }
+                    catch (Exception) when (!ct.IsCancellationRequested)
+                    {
+                        // Connected but not subscribed would look healthy and receive nothing; drop the
+                        // connection so the loop starts over.
+                        await _client.DisconnectAsync(cancellationToken: CancellationToken.None);
+                        throw;
+                    }
                 }
                 log?.Invoke($"MQTT connected to {settings.Host}:{settings.Port}");
                 _firstConnect.TrySetResult();

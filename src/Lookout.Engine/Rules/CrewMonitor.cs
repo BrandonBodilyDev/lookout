@@ -16,12 +16,22 @@ public sealed class CrewMonitor(string crewId, AlertSettings settings, SpreadGri
     private const double MinProgressM = 10.0;
     private readonly AlertLatch _latch = new(settings.DowngradeHoldMin);
     private readonly Dictionary<string, (double FixMin, double S, bool Moving)> _progress = new();
+    /// <summary>A better route must beat the one the crew was told to use by this much before Lookout re-routes them.</summary>
+    public const double RouteSwitchMarginMin = 2.0;
+    private string? _toldRoute;
+    private HashSet<string> _toldAvoid = [];
 
     public string CrewId { get; } = crewId;
     public AlertLevel Reported => _latch.Reported;
 
     /// <summary>The alert for <paramref name="change"/> could not be recorded: forget it so the next call raises it again.</summary>
-    public void Revert(AlertChange change) => _latch.Reset(change.From);
+    public void Revert(AlertChange change)
+    {
+        _latch.Reset(change.From);
+        // Forget the route instruction too, so a re-route that failed to send is attempted again.
+        _toldRoute = null;
+        _toldAvoid = [];
+    }
 
     /// <summary>After a restart: carry on from the level last sent to the crew instead of from None.</summary>
     public void Seed(AlertLevel lastReported) => _latch.Reset(lastReported);
@@ -48,12 +58,23 @@ public sealed class CrewMonitor(string crewId, AlertSettings settings, SpreadGri
                 : GridCutoffRule.Evaluate(grid, o.Profile, o.Zone, known, front, wind, settings, t)))
             .ToList();
         var best = results.FirstOrDefault(r => r.Cutoff.InSafetyZone);
-        if (best.Option is null) best = results.MaxBy(r => r.Cutoff.MarginMin);
+        if (best.Option is null)
+        {
+            best = results.MaxBy(r => r.Cutoff.MarginMin);
+            // Stay on the route the crew was told to use unless it is cut or another is clearly better,
+            // so a recommendation does not flip-flop between two routes with similar margins.
+            var told = results.FirstOrDefault(r => r.Option.Profile.Route.Id == _toldRoute);
+            if (told.Option is not null && told.Cutoff.MarginMin >= 0 && best.Cutoff.MarginMin - told.Cutoff.MarginMin < RouteSwitchMarginMin)
+                best = told;
+        }
         // Alternatives that would not leave the buffer are named, so nobody takes them under pressure.
-        var unsafeAlternatives = results
+        var unsafeResults = results
             .Where(r => r.Option != best.Option && !r.Cutoff.InSafetyZone && r.Cutoff.MarginMin < settings.BufferMin)
+            .ToList();
+        var unsafeAlternatives = unsafeResults
             .Select(r => r.Cutoff.MarginMin < 0 ? $"{r.Option.Profile.Route.Id} (cut)" : $"{r.Option.Profile.Route.Id} ({r.Cutoff.MarginMin:0} min margin)")
             .ToList();
+        var bestId = best.Option.Profile.Route.Id;
 
         var moving = routes.ToDictionary(o => o.Profile.Route.Id, o => UpdateProgress(o.Profile, known, fixMin));
         var enRoute = moving[best.Option.Profile.Route.Id];
@@ -78,6 +99,21 @@ public sealed class CrewMonitor(string crewId, AlertSettings settings, SpreadGri
         {
             var text = AlertText(_latch.Reported, cutoff, findings);
             change = new AlertChange(before, _latch.Reported, text, Encoding.UTF8.GetByteCount(text));
+        }
+        else if (_latch.Reported >= AlertLevel.Watch && !cutoff.InSafetyZone && _toldRoute is not null
+                 && (bestId != _toldRoute || unsafeResults.Any(r => !_toldAvoid.Contains(r.Option.Profile.Route.Id))))
+        {
+            // Same level, new instruction: the recommended route changed, or another route became unsafe.
+            // Without this, the crew's last message could point at a route that is now cut.
+            var summary = $"Change of route: {CutoffSummary(cutoff, best.Option.Profile.Route, t, enRoute, clock)}";
+            if (unsafeAlternatives.Count > 0) summary += $". Avoid {string.Join(", ", unsafeAlternatives)}";
+            var text = $"{CrewId} {_latch.Reported.ToString().ToUpperInvariant()}: {summary}";
+            change = new AlertChange(before, _latch.Reported, text, Encoding.UTF8.GetByteCount(text));
+        }
+        if (change is not null)
+        {
+            _toldRoute = bestId;
+            _toldAvoid = unsafeResults.Select(r => r.Option.Profile.Route.Id).ToHashSet();
         }
         var alternatives = results.Select(r => new RouteMargin(r.Option.Profile.Route.Id, r.Cutoff.InSafetyZone ? double.PositiveInfinity : r.Cutoff.MarginMin)).ToList();
         return new CrewAssessment(cutoff, findings, level, enRoute, change, best.Option.Profile.Route.Id, alternatives);

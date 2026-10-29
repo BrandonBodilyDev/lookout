@@ -16,5 +16,8 @@ topic write lookout/+/wx
 
 # A real crew device would log in as its own user, named after its crew (for example ALPHA),
 # and could only send on its own uplink and hear its own downlink. %u is the username.
+# Limitation: the "+" matches any incident, so this scopes a device to its crew id, not to an
+# incident. Scoping by incident needs a per-device identity in the topic (for example the modem's
+# IMEI) mapped to an incident on the server; not built yet.
 pattern write lookout/+/crew/%u/up
 pattern read lookout/+/crew/%u/down

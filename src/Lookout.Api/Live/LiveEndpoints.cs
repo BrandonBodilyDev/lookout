@@ -16,7 +16,17 @@ public static class LiveEndpoints
     public sealed record PutZone(string Name, double[][] Ring, uint? Version);
     public sealed record PhonePosition(double Lat, double Lon, int? Battery, ushort? Sequence);
     public sealed record PushKeys(string P256dh, string Auth);
-    public sealed record PushSubscribe(string Endpoint, PushKeys Keys);
+    public sealed record PushSubscribe(string Endpoint, PushKeys? Keys);
+
+    /// <summary>
+    /// The browser push services. The server will POST to a subscription's endpoint, so anything else
+    /// would let a token holder make the server call arbitrary hosts (server-side request forgery).
+    /// </summary>
+    private static bool IsKnownPushService(Uri u) =>
+        u.Scheme == Uri.UriSchemeHttps && (
+            u.Host is "fcm.googleapis.com" or "updates.push.services.mozilla.com" or "web.push.apple.com"
+            || u.Host.EndsWith(".push.apple.com", StringComparison.OrdinalIgnoreCase)
+            || u.Host.EndsWith(".notify.windows.com", StringComparison.OrdinalIgnoreCase));
 
     public static void MapLive(this WebApplication app, bool devAuth)
     {
@@ -122,9 +132,9 @@ public static class LiveEndpoints
             if (actor.Role == Roles.Crew && actor.CrewId != crewId)
                 return Results.Problem($"Crew {actor.CrewId} cannot subscribe for crew {crewId}.", statusCode: StatusCodes.Status403Forbidden);
             // Push services are https; anything else (or junk) is refused rather than called later.
-            if (!Uri.TryCreate(s.Endpoint, UriKind.Absolute, out var endpoint) || endpoint.Scheme != Uri.UriSchemeHttps
-                || s.Endpoint.Length > 1024 || s.Keys.P256dh.Length > 128 || s.Keys.Auth.Length > 64)
-                return Results.Problem("Not a valid push subscription.", statusCode: StatusCodes.Status400BadRequest);
+            if (s.Keys is not { P256dh.Length: > 0 and <= 128, Auth.Length: > 0 and <= 64 }
+                || s.Endpoint is not { Length: <= 1024 } || !Uri.TryCreate(s.Endpoint, UriKind.Absolute, out var endpoint) || !IsKnownPushService(endpoint))
+                return Results.Problem("Not a valid push subscription from a browser push service.", statusCode: StatusCodes.Status400BadRequest);
             if (!await db.Crews.AnyAsync(c => c.IncidentId == id && c.CrewId == crewId, ct)) throw new NotFoundException($"Crew {crewId}");
             if (!await db.PushSubscriptions.AnyAsync(p => p.IncidentId == id && p.CrewId == crewId && p.Endpoint == s.Endpoint, ct))
             {
@@ -132,7 +142,8 @@ public static class LiveEndpoints
                 {
                     IncidentId = id, CrewId = crewId, Endpoint = s.Endpoint, P256dh = s.Keys.P256dh, Auth = s.Keys.Auth, CreatedAt = clock.GetUtcNow(),
                 });
-                await db.SaveChangesAsync(ct);
+                try { await db.SaveChangesAsync(ct); }
+                catch (DbUpdateException) { /* the same phone subscribed twice at once: already registered */ }
             }
             return Results.NoContent();
         }).RequireAuthorization(Policies.Field);

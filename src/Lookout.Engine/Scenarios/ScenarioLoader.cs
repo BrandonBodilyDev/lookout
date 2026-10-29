@@ -68,6 +68,8 @@ public static class ScenarioLoader
         var crews = f.Crews.Select(c =>
         {
             var routeIds = c.Routes.Count > 0 ? c.Routes : [c.Route];
+            if (routeIds.Distinct().Count() != routeIds.Count)
+                throw new InvalidDataException($"Crew {c.Id} lists the same escape route twice.");
             foreach (var id in routeIds)
                 if (routes.All(r => r.Id != id))
                     throw new InvalidDataException($"Crew {c.Id} names unknown route {id}.");

@@ -80,9 +80,14 @@ public sealed class WebPushTests(LookoutAppFixture fx)
         var phone = fx.Client("crew", "ALPHA", incident);
         var (p256dh, auth) = ClientKeys();
 
-        var http = await phone.PostAsJsonAsync($"/api/incidents/{incident}/crews/ALPHA/push",
-            new { endpoint = "http://evil.example/push", keys = new { p256dh, auth } }, ct);
-        Assert.Equal(HttpStatusCode.BadRequest, http.StatusCode);
+        // Only browser push services: anything else would let a token holder make the server call it.
+        foreach (var bad in new[] { "http://fcm.googleapis.com/fcm/send/x", "https://internal-admin.local/hook", "https://fcm.googleapis.com.evil.example/x" })
+        {
+            var res = await phone.PostAsJsonAsync($"/api/incidents/{incident}/crews/ALPHA/push", new { endpoint = bad, keys = new { p256dh, auth } }, ct);
+            Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        }
+        var noKeys = await phone.PostAsJsonAsync($"/api/incidents/{incident}/crews/ALPHA/push", new { endpoint = "https://fcm.googleapis.com/fcm/send/x" }, ct);
+        Assert.Equal(HttpStatusCode.BadRequest, noKeys.StatusCode);
 
         var body = new { endpoint = "https://fcm.googleapis.com/fcm/send/abc123", keys = new { p256dh, auth } };
         Assert.Equal(HttpStatusCode.NoContent, (await phone.PostAsJsonAsync($"/api/incidents/{incident}/crews/ALPHA/push", body, ct)).StatusCode);

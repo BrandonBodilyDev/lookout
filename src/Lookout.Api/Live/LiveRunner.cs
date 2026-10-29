@@ -167,7 +167,8 @@ public sealed class LiveRunner(
     {
         switch (s)
         {
-            case IncidentCreated:
+            case IncidentCreated when !_incidents.ContainsKey(s.IncidentId):
+                // A field message may already have loaded it; reloading would reset its front and wind.
                 await LoadAsync(s.IncidentId, ct);
                 break;
             case LayoutChanged when _incidents.TryGetValue(s.IncidentId, out var rt):
@@ -311,6 +312,17 @@ public sealed class LiveRunner(
             }
             Telemetry.AlertsRaised.Add(1, new KeyValuePair<string, object?>("level", change.To.ToString().ToLowerInvariant()));
             Offer(rt, raised.Alert, a.Cutoff.LeaveByMin);
+            // Wake the crew's phones beside the link, not after it: push does not wait for the broker or
+            // the satellite session spacing. Raising happens once per alert, so a restart cannot push twice.
+            if (push.Enabled && raised.Alert.RequiresAck)
+            {
+                var (incidentId, crewId, level, text) = (raised.Alert.IncidentId, raised.Alert.CrewId, raised.Alert.Level, raised.Alert.Text);
+                _ = Task.Run(async () =>
+                {
+                    try { await push.NotifyAsync(incidentId, crewId, level, text, ct); }
+                    catch (Exception e) when (!ct.IsCancellationRequested) { log.LogWarning(e, "Web Push for crew {Crew} failed", crewId); }
+                }, ct);
+            }
             foreach (var old in raised.Superseded) await group.SendAsync("alert", AlertDto.From(old), ct);
             await group.SendAsync("alert", AlertDto.From(raised.Alert), ct);
         }
@@ -337,16 +349,6 @@ public sealed class LiveRunner(
                 await alerts.MarkSentAsync(tx.AlertId, ct);
                 var sent = await scope.ServiceProvider.GetRequiredService<LookoutDb>().Alerts.AsNoTracking().SingleAsync(x => x.Id == tx.AlertId, ct);
                 await group.SendAsync("alert", AlertDto.From(sent), ct);
-                // Wake the crew's phones too, once per warning (repeats go over the link only), off the loop.
-                if (push.Enabled && sent.RequiresAck && !tx.IsRepeat)
-                {
-                    var (incidentId, crewId, level, text) = (sent.IncidentId, sent.CrewId, sent.Level, sent.Text);
-                    _ = Task.Run(async () =>
-                    {
-                        try { await push.NotifyAsync(incidentId, crewId, level, text, ct); }
-                        catch (Exception e) when (!ct.IsCancellationRequested) { log.LogWarning(e, "Web Push for crew {Crew} failed", crewId); }
-                    }, ct);
-                }
             }
             catch (Exception e) when (!ct.IsCancellationRequested)
             {
@@ -386,7 +388,7 @@ public sealed class LiveRunner(
                 var level = rt.Monitors.TryGetValue(crew.CrewId, out var m) ? m.Reported : AlertLevel.None;
                 rt.LastAssessment.TryGetValue(crew.CrewId, out var a);
                 var summary = a?.Findings.OrderByDescending(f => f.Level).FirstOrDefault()?.Summary;
-                events.Add(CotBuilder.Crew(id, crew.CrewId, lat, lon, level.ToString().ToLowerInvariant(), summary, fix.Battery, now));
+                events.Add(CotBuilder.Crew(id, crew.CrewId, lat, lon, level.ToString().ToLowerInvariant(), summary, fix.Battery >= 0 ? fix.Battery : null, now));
                 if (level >= AlertLevel.Warning && a?.Cutoff.CutPoint is { } cut && summary is not null)
                 {
                     var (cutLon, cutLat) = rt.Frame.ToLonLat(cut);

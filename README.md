@@ -212,7 +212,7 @@ stateDiagram-v2
 - **Roles.** The incident commander can start incidents, acknowledge for any crew, cancel with a reason, and redraw routes and safety zones. A crew device can acknowledge only its own alerts. An observer can only watch.
 - **Audit.** Each alert change and its audit event are saved in one transaction. The audit table is a TimescaleDB hypertable, and a database trigger rejects UPDATE, DELETE and TRUNCATE. The API also connects as a restricted role that may only insert into and read the audit table; migrations run as the owner.
 
-Sign-in uses development tokens issued by the API; a real deployment would use the organisation's identity provider. Crew tokens are valid for one incident only. On the broker, the server and the field simulator have separate accounts, and access rules let a crew device use only its own topics.
+Sign-in uses development tokens issued by the API; a real deployment would use the organisation's identity provider. Crew tokens are valid for one incident only. On the broker, the server and the field simulator have separate accounts, and access rules let a crew device use only its own crew's topics; those rules are per crew, not yet per incident.
 
 ### Data model
 

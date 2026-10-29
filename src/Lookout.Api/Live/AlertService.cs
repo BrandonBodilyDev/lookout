@@ -30,9 +30,12 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
             {
                 return await RaiseOnceAsync(incidentId, crewId, level, text, scenarioMin, ct);
             }
-            catch (DbUpdateException) when (attempt < 3)
+            catch (DbUpdateException)
             {
+                // Always discard the failed attempt's rows: otherwise the next save in this tick (another
+                // crew's alert, a send, an escalation) would write an alert the caller has rolled back.
                 db.ChangeTracker.Clear();
+                if (attempt >= 3) throw;
             }
         }
     }

@@ -108,7 +108,7 @@ Short records of the choices that shape Lookout, why they were made, and what th
 
 **Why.** It makes the role model testable and demonstrable without an identity provider. Swapping in Entra ID or another OIDC issuer changes configuration, not authorization code.
 
-**Scope.** Crew tokens carry the incident they were issued for, because crew ids such as ALPHA repeat across incidents; every incident endpoint and the live hub refuse a crew token from another incident. On the broker, the server and the field simulator have separate accounts, and an ACL lets a real crew device publish only on its own uplink and read only its own downlink.
+**Scope.** Crew tokens carry the incident they were issued for, because crew ids such as ALPHA repeat across incidents; every incident endpoint and the live hub refuse a crew token from another incident. On the broker, the server and the field simulator have separate accounts, and an ACL lets a real crew device publish only on its own crew's uplink and read only its own crew's downlink. That broker rule is per crew id, not per incident: scoping devices to an incident needs a per-device identity (such as the modem IMEI) in the topic layout, which is not built yet. The HTTP side is incident-scoped.
 
 **Cost.** Dev auth must never be enabled on a reachable deployment. Docker compose binds every port to localhost, the API logs a warning whenever dev sign-in is on outside Development, and startup refuses to run live mode without a signing key of at least 32 characters.
 
