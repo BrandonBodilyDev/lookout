@@ -32,6 +32,19 @@ public static class DroneCommands
                 Console.WriteLine($"{track.Count} samples over {span:0} s, height {track.Min(s => s.HeightM):0}-{track.Max(s => s.HeightM):0} m above take-off. Wrote {outPath}");
                 return 0;
             }
+            case "fov":
+            {
+                // Field-of-view calibration from one nadir frame of a ground target (drone runbook, step 2).
+                if (!opts.ContainsKey("target-m") || !opts.ContainsKey("target-px") || !opts.ContainsKey("height-m")) return Usage();
+                var width = (int)D(opts, "width", 1920);
+                var hfov = CameraModel.HfovFromGroundTarget(width, D(opts, "target-m", 0), D(opts, "target-px", 0), D(opts, "height-m", 0));
+                var spec = CameraModel.MavicMini1080p.HfovDeg;
+                Console.WriteLine($"Horizontal field of view {hfov:0.0}° (spec-sheet value {spec}°, difference {hfov - spec:+0.0;-0.0}°).");
+                Console.WriteLine(Math.Abs(hfov - spec) > 2
+                    ? $"Differs by more than 2°: pass --hfov {hfov:0.0} to drone survey and update CameraModel.MavicMini1080p."
+                    : "Within 2° of the spec value: no change needed.");
+                return 0;
+            }
             case "survey" when args.Length >= 4:
             {
                 var scenario = ScenarioLoader.LoadFile(args[2]);
@@ -175,6 +188,7 @@ public static class DroneCommands
             drone track  <video.MP4 | log.SRT> [out.geojson]
             drone survey <scenario.yaml> <video.MP4> [--srt f] [--log airdata.csv] [--heading deg] [--pitch deg]
                          [--fps n] [--hfov deg] [--model detector.onnx] [--fire-classes 0,1] [--out f] [--publish incident-id]
+            drone fov    --target-m m --target-px px --height-m m [--width px]
             drone flight <scenario.yaml> <minute> <out-dir> [--altitude m] [--seconds n]
             drone frame  <scenario.yaml> <minute> <out.png> [--altitude m] [--pitch deg]
             """);

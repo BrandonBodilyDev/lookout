@@ -58,6 +58,17 @@ public class SrtLogTests
 
 public class ProjectionTests
 {
+    [Fact]
+    public void Field_of_view_from_a_ground_target_inverts_the_pinhole_model()
+    {
+        // At 30 m, a 71.5° camera covers 2·30·tan(35.75°) = 43.2 m across 1920 px; a 20 m tape spans 889 px.
+        var groundWidth = 2 * 30 * Math.Tan(71.5 * Math.PI / 360);
+        var tapePx = 1920 * 20 / groundWidth;
+        Assert.Equal(71.5, CameraModel.HfovFromGroundTarget(1920, 20, tapePx, 30), 6);
+        Assert.Throws<ArgumentOutOfRangeException>(() => CameraModel.HfovFromGroundTarget(1920, 20, 0, 30));
+        Assert.Throws<ArgumentOutOfRangeException>(() => CameraModel.HfovFromGroundTarget(1920, 20, 2000, 30));
+    }
+
     private static readonly CameraModel Cam = CameraModel.WithAspect(800, 600, 71.5);
 
     [Fact]

@@ -318,7 +318,7 @@ The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add
 
 ## Roadmap
 
-1. **Phase 1, done.** Terrain-aware engine, live incidents over MQTT, the link governor, the acknowledgement workflow, the audit trail, TAK export, and NWS weather.
+1. **Phase 1, done.** Terrain-aware engine, live incidents over MQTT, the device registry, the link governor, the acknowledgement workflow, the audit trail, TAK export, and NWS weather.
 2. **Phase 2, built.** The drone pipeline described above: subtitle tracks, ground projection over terrain, color and ONNX detectors, burned-area mapping, and publishing into live incidents. Still to do: run it on real footage, either FLAME 2 prescribed-burn video or a legal fire-pit flight, and calibrate the Mavic Mini's field of view against a ground target.
 3. **Phase 3, started.** Done: the crew phone view with acknowledgements, optional phone GPS, and Web Push. Still to do: try push on real Android and iPhone devices, a live drone video feed through DJI Mobile SDK 4 on Android, and on-device inference.
 

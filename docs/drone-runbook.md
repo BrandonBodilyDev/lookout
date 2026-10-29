@@ -32,7 +32,11 @@ The 71.5° horizontal field of view is derived from the spec sheet, not measured
 1. Lay out a known length on open ground, such as a 30 m tape measure or two cones 20 m apart.
 2. Hover straight above it, gimbal at −90°, at a measured height, for example 30 m from the subtitle track.
 3. Grab a frame and measure the target's length in pixels.
-4. Compute: `HFOV = 2 · atan( (image_width_px · target_m / target_px) / (2 · height_m) )`.
+4. Compute `HFOV = 2 · atan( (image_width_px · target_m / target_px) / (2 · height_m) )`, or let the simulator do it. Lay the target along the frame's long side, and use the height above the target's ground:
+
+   ```bash
+   dotnet run --project src/Lookout.Sim -- drone fov --target-m 20 --target-px 889 --height-m 30 --width 1920
+   ```
 5. Pass the result with `--hfov`, and update `CameraModel.MavicMini1080p` and `docs/assumptions.md` if it differs by more than a degree or two.
 
 ## 3. Survey the flight

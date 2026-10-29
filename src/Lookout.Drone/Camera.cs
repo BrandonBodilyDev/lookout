@@ -19,6 +19,22 @@ public sealed record CameraModel(int Width, int Height, double HfovDeg, double V
         return new CameraModel(width, height, hfovDeg, vfov);
     }
 
+    /// <summary>
+    /// Horizontal field of view measured from a nadir frame of a ground target of known length,
+    /// laid along the image's horizontal axis. The ground width the image covers is
+    /// <c>imageWidthPx · targetM / targetPx</c>; half of it over the height gives the half-angle.
+    /// </summary>
+    /// <param name="heightM">Camera height above the target's ground, not above sea level.</param>
+    public static double HfovFromGroundTarget(int imageWidthPx, double targetM, double targetPx, double heightM)
+    {
+        if (imageWidthPx <= 0 || targetM <= 0 || targetPx <= 0 || heightM <= 0)
+            throw new ArgumentOutOfRangeException(nameof(targetPx), "Image width, target length, target pixels and height must all be positive.");
+        if (targetPx > imageWidthPx)
+            throw new ArgumentOutOfRangeException(nameof(targetPx), "The target cannot be wider than the image.");
+        var groundWidthM = imageWidthPx * targetM / targetPx;
+        return 2 * Math.Atan(groundWidthM / (2 * heightM)) * 180 / Math.PI;
+    }
+
     public double Fx => Width / (2 * Math.Tan(HfovDeg * Math.PI / 360));
     public double Fy => Height / (2 * Math.Tan(VfovDeg * Math.PI / 360));
 }
