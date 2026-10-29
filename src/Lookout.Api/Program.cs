@@ -3,6 +3,8 @@ using Lookout.Api;
 using Lookout.Api.Auth;
 using Lookout.Api.Data;
 using Lookout.Api.Live;
+using Lookout.Api.Weather;
+using Lookout.Link;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -53,11 +55,20 @@ builder.Services.AddAuthorizationBuilder()
     .AddPolicy(Policies.Field, p => p.RequireRole(Roles.IncidentCommander, Roles.Crew))
     .AddPolicy(Policies.Read, p => p.RequireRole(Roles.All));
 
+builder.Services.AddHttpClient<NwsClient>(c => c.Timeout = TimeSpan.FromSeconds(15));
+
 if (live)
 {
     builder.Services.AddDbContext<LookoutDb>(o => o.UseNpgsql(connection, n => n.UseNetTopologySuite()));
     builder.Services.AddScoped<AlertService>();
     builder.Services.AddScoped<IncidentService>();
+    builder.Services.AddSingleton<IncidentSignals>();
+    builder.Services.AddSingleton<LiveSnapshots>();
+    builder.Services.AddSingleton(config.GetSection("Lookout:Live").Get<LiveOptions>() ?? new LiveOptions());
+    // No broker configured means loopback mode: the engine runs, nothing leaves the server.
+    builder.Services.AddSingleton(new BrokerConfig(config.GetSection("Lookout:Mqtt").Get<MqttSettings>() is { Host.Length: > 0 } m ? m : null));
+    builder.Services.AddSignalR();
+    if (config.GetValue("Lookout:Live:Enabled", true)) builder.Services.AddHostedService<LiveRunner>();
 }
 
 var app = builder.Build();
@@ -78,7 +89,11 @@ app.MapGet("/api/scenarios", (ScenarioStore store) =>
 app.MapGet("/api/scenarios/{id}/timeline", (string id, ScenarioStore store) =>
     store.Run(id) is { } run ? Results.Ok(TimelineDto.From(run)) : Results.NotFound());
 
-if (live) app.MapLive(devAuth);
+if (live)
+{
+    app.MapLive(devAuth);
+    app.MapHub<IncidentHub>("/hubs/incident");
+}
 
 app.Run();
 

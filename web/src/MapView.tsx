@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import * as maplibregl from "maplibre-gl";
-import type { GeoJSONSource, Map as MlMap } from "maplibre-gl";
+import type { GeoJSONSource, Map as MlMap, MapMouseEvent } from "maplibre-gl";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-import type { Frame, Level, Timeline } from "./types";
+import type { Level, LonLat, MultiPolygonCoords } from "./types";
 
 // MapLibre 6 finds its worker relative to its own module URL, which bundling moves.
 // Let Vite bundle the worker and hand MapLibre the resulting URL instead.
@@ -19,35 +19,78 @@ export const LEVEL_COLOR: Record<Level, string> = {
   critical: "#dc2626",
 };
 
+/** What does not change every second: where routes and zones are, and which crew uses which route. */
+export interface MapLayout {
+  /** Changing the key rebuilds the map (new scenario or incident). */
+  key: string;
+  origin: LonLat;
+  routes: { id: string; path: number[][] }[];
+  zones: { id: string; ring: LonLat[] }[];
+  crewRoutes: Record<string, string>;
+  /** Extra points to include when fitting the view, e.g. the final fire extent of a replay. */
+  boundsHint?: LonLat[];
+}
+
+export interface MapCrew {
+  id: string;
+  known: LonLat | null;
+  /** Replay only: where the crew really is, drawn as a ring while its last fix is stale. */
+  truth?: LonLat | null;
+  level: Level;
+  enRoute: boolean;
+  stale: boolean;
+  cut: LonLat | null;
+  fireAtCut: string | null;
+  leaveNowZone: MultiPolygonCoords | null;
+}
+
+export interface MapState {
+  fire: MultiPolygonCoords;
+  crews: MapCrew[];
+}
+
+export interface DrawState {
+  mode: "route" | "zone";
+  points: LonLat[];
+  onClick: (p: LonLat) => void;
+}
+
 type FC = GeoJSON.FeatureCollection;
 const fc = (features: GeoJSON.Feature[]): FC => ({ type: "FeatureCollection", features });
 
-function staticData(tl: Timeline) {
+function layoutData(layout: MapLayout, state: MapState) {
+  const levelByRoute = new Map<string, Level>();
+  for (const c of state.crews) {
+    const route = layout.crewRoutes[c.id];
+    if (route) levelByRoute.set(route, c.level);
+  }
   return {
     zones: fc(
-      tl.safetyZones.map((z) => ({
+      layout.zones.map((z) => ({
         type: "Feature",
-        properties: { id: z.id, name: z.name },
+        properties: { id: z.id },
         geometry: { type: "Polygon", coordinates: [z.ring] },
+      })),
+    ),
+    routes: fc(
+      layout.routes.map((r) => ({
+        type: "Feature",
+        properties: { id: r.id, level: levelByRoute.get(r.id) ?? "none" },
+        geometry: { type: "LineString", coordinates: r.path.map(([lon, lat]) => [lon, lat]) },
       })),
     ),
   };
 }
 
-function frameData(tl: Timeline, frame: Frame) {
-  const levelByRoute = new Map<string, Level>();
-  for (const c of frame.crews) {
-    const route = tl.crews.find((x) => x.id === c.id)?.route;
-    if (route) levelByRoute.set(route, c.level);
-  }
+function stateData(state: MapState) {
   return {
     fire: fc(
-      frame.fire.length > 0
-        ? [{ type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates: frame.fire } }]
+      state.fire.length > 0
+        ? [{ type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates: state.fire } }]
         : [],
     ),
-    zonesNow: fc(
-      frame.crews
+    leaveNow: fc(
+      state.crews
         .filter((c) => c.leaveNowZone && c.level !== "none" && !c.enRoute)
         .map((c) => ({
           type: "Feature",
@@ -55,31 +98,22 @@ function frameData(tl: Timeline, frame: Frame) {
           geometry: { type: "MultiPolygon", coordinates: c.leaveNowZone! },
         })),
     ),
-    routes: fc(
-      tl.routes.map((r) => ({
-        type: "Feature",
-        properties: { id: r.id, level: levelByRoute.get(r.id) ?? "none" },
-        geometry: { type: "LineString", coordinates: r.path.map(([lon, lat]) => [lon, lat]) },
-      })),
-    ),
     crews: fc(
-      frame.crews.map((c) => ({
-        type: "Feature",
-        properties: { id: c.id, level: c.level, stale: (c.fixAgeMin ?? 0) >= 5 },
-        geometry: { type: "Point", coordinates: c.known },
-      })),
-    ),
-    truth: fc(
-      frame.crews
-        .filter((c) => (c.fixAgeMin ?? 0) >= 5)
+      state.crews
+        .filter((c) => c.known)
         .map((c) => ({
           type: "Feature",
-          properties: { id: c.id },
-          geometry: { type: "Point", coordinates: c.truth },
+          properties: { id: c.id, level: c.level, stale: c.stale },
+          geometry: { type: "Point", coordinates: c.known! },
         })),
     ),
+    truth: fc(
+      state.crews
+        .filter((c) => c.stale && c.truth)
+        .map((c) => ({ type: "Feature", properties: { id: c.id }, geometry: { type: "Point", coordinates: c.truth! } })),
+    ),
     cuts: fc(
-      frame.crews
+      state.crews
         .filter((c) => c.cut && (c.level === "warning" || c.level === "critical") && !c.enRoute)
         .map((c) => ({
           type: "Feature",
@@ -88,6 +122,20 @@ function frameData(tl: Timeline, frame: Frame) {
         })),
     ),
   };
+}
+
+function drawData(draw: DrawState | null): FC {
+  if (!draw || draw.points.length === 0) return fc([]);
+  const features: GeoJSON.Feature[] = draw.points.map((p) => ({
+    type: "Feature",
+    properties: {},
+    geometry: { type: "Point", coordinates: p },
+  }));
+  if (draw.points.length > 1) {
+    const line = draw.mode === "zone" ? [...draw.points, draw.points[0]] : draw.points;
+    features.push({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: line } });
+  }
+  return fc(features);
 }
 
 const levelColor = [
@@ -99,18 +147,20 @@ const levelColor = [
   LEVEL_COLOR.none,
 ] as unknown as maplibregl.DataDrivenPropertyValueSpecification<string>;
 
-export function MapView({ timeline, frame }: { timeline: Timeline; frame: Frame }) {
+const setData = (map: MlMap, id: string, data: FC) => (map.getSource(id) as GeoJSONSource | undefined)?.setData(data);
+
+export function MapView({ layout, state, draw = null }: { layout: MapLayout; state: MapState; draw?: DrawState | null }) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
   const ready = useRef(false);
-  const latest = useRef({ timeline, frame });
-  latest.current = { timeline, frame };
+  const latest = useRef({ layout, state, draw });
+  latest.current = { layout, state, draw };
 
   useEffect(() => {
     const map = new maplibregl.Map({
       container: container.current!,
       style: BASEMAP,
-      center: timeline.origin,
+      center: layout.origin,
       zoom: 14,
       attributionControl: { compact: true },
     });
@@ -118,11 +168,13 @@ export function MapView({ timeline, frame }: { timeline: Timeline; frame: Frame 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
     map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 
+    map.on("click", (e: MapMouseEvent) => latest.current.draw?.onClick([e.lngLat.lng, e.lngLat.lat]));
+
     map.on("load", () => {
-      const { timeline: tl, frame: fr } = latest.current;
-      const s = staticData(tl);
-      const d = frameData(tl, fr);
-      const firstLabelLayer = map.getStyle().layers.find((l: { type: string }) => l.type === "symbol")?.id;
+      const { layout: lo, state: st, draw: dr } = latest.current;
+      const l = layoutData(lo, st);
+      const d = stateData(st);
+      const firstLabelLayer = map.getStyle().layers.find((x: { type: string }) => x.type === "symbol")?.id;
 
       map.addSource("terrain", {
         type: "raster-dem",
@@ -133,22 +185,18 @@ export function MapView({ timeline, frame }: { timeline: Timeline; frame: Frame 
         attribution: "Terrain: Mapterhorn (USGS 3DEP)",
       });
       map.addLayer(
-        {
-          id: "hillshade",
-          type: "hillshade",
-          source: "terrain",
-          paint: { "hillshade-exaggeration": 0.45, "hillshade-shadow-color": "#3b3326" },
-        },
+        { id: "hillshade", type: "hillshade", source: "terrain", paint: { "hillshade-exaggeration": 0.45, "hillshade-shadow-color": "#3b3326" } },
         firstLabelLayer,
       );
 
-      map.addSource("zones", { type: "geojson", data: s.zones });
+      map.addSource("zones", { type: "geojson", data: l.zones });
+      map.addSource("routes", { type: "geojson", data: l.routes });
       map.addSource("fire", { type: "geojson", data: d.fire });
-      map.addSource("routes", { type: "geojson", data: d.routes });
+      map.addSource("leave-now", { type: "geojson", data: d.leaveNow });
       map.addSource("crews", { type: "geojson", data: d.crews });
       map.addSource("truth", { type: "geojson", data: d.truth });
       map.addSource("cuts", { type: "geojson", data: d.cuts });
-      map.addSource("leave-now", { type: "geojson", data: d.zonesNow });
+      map.addSource("draw", { type: "geojson", data: drawData(dr) });
 
       map.addLayer({ id: "zones-fill", type: "fill", source: "zones", paint: { "fill-color": "#2f9e5b", "fill-opacity": 0.25 } });
       map.addLayer({ id: "zones-line", type: "line", source: "zones", paint: { "line-color": "#1f7a43", "line-width": 2 } });
@@ -212,13 +260,7 @@ export function MapView({ timeline, frame }: { timeline: Timeline; frame: Frame 
         id: "truth",
         type: "circle",
         source: "truth",
-        paint: {
-          "circle-radius": 7,
-          "circle-color": "rgba(0,0,0,0)",
-          "circle-stroke-color": "#6b7280",
-          "circle-stroke-width": 2,
-          "circle-stroke-opacity": 0.8,
-        },
+        paint: { "circle-radius": 7, "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": "#6b7280", "circle-stroke-width": 2, "circle-stroke-opacity": 0.8 },
       });
       map.addLayer({
         id: "crews",
@@ -240,11 +282,20 @@ export function MapView({ timeline, frame }: { timeline: Timeline; frame: Frame 
         paint: { "text-color": "#111827", "text-halo-color": "#fff", "text-halo-width": 2 },
       });
 
+      map.addLayer({ id: "draw-line", type: "line", source: "draw", paint: { "line-color": "#2563eb", "line-width": 3, "line-dasharray": [1, 1] } });
+      map.addLayer({
+        id: "draw-points",
+        type: "circle",
+        source: "draw",
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: { "circle-radius": 5, "circle-color": "#2563eb", "circle-stroke-color": "#fff", "circle-stroke-width": 2 },
+      });
+
       const bounds = new maplibregl.LngLatBounds();
-      tl.routes.forEach((r) => r.path.forEach(([lon, lat]) => bounds.extend([lon, lat])));
-      tl.safetyZones.forEach((z) => z.ring.forEach((p) => bounds.extend(p)));
-      tl.frames[tl.frames.length - 1].fire.forEach((poly) => poly[0].forEach((p) => bounds.extend(p)));
-      map.fitBounds(bounds, { padding: 60, duration: 0 });
+      lo.routes.forEach((r) => r.path.forEach(([lon, lat]) => bounds.extend([lon, lat])));
+      lo.zones.forEach((z) => z.ring.forEach((p) => bounds.extend(p)));
+      (lo.boundsHint ?? []).forEach((p) => bounds.extend(p));
+      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60, duration: 0 });
 
       ready.current = true;
     });
@@ -254,21 +305,30 @@ export function MapView({ timeline, frame }: { timeline: Timeline; frame: Frame 
       map.remove();
       mapRef.current = null;
     };
-    // The map is created once per scenario; frames are pushed in the effect below.
+    // The map is created once per layout key; data is pushed by the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeline.id]);
+  }, [layout.key]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready.current) return;
-    const d = frameData(timeline, frame);
-    (map.getSource("fire") as GeoJSONSource).setData(d.fire);
-    (map.getSource("routes") as GeoJSONSource).setData(d.routes);
-    (map.getSource("crews") as GeoJSONSource).setData(d.crews);
-    (map.getSource("truth") as GeoJSONSource).setData(d.truth);
-    (map.getSource("cuts") as GeoJSONSource).setData(d.cuts);
-    (map.getSource("leave-now") as GeoJSONSource).setData(d.zonesNow);
-  }, [timeline, frame]);
+    const l = layoutData(layout, state);
+    const d = stateData(state);
+    setData(map, "zones", l.zones);
+    setData(map, "routes", l.routes);
+    setData(map, "fire", d.fire);
+    setData(map, "leave-now", d.leaveNow);
+    setData(map, "crews", d.crews);
+    setData(map, "truth", d.truth);
+    setData(map, "cuts", d.cuts);
+  }, [layout, state]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready.current) return;
+    setData(map, "draw", drawData(draw));
+    map.getCanvas().style.cursor = draw ? "crosshair" : "";
+  }, [draw]);
 
   return <div ref={container} className="map" role="region" aria-label="Incident map" />;
 }

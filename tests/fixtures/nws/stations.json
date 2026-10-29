@@ -1,0 +1,165 @@
+{
+ "@context": [
+  "https://geojson.org/geojson-ld/geojson-context.jsonld",
+  {
+   "@version": "1.1",
+   "wx": "https://api.weather.gov/ontology#",
+   "s": "https://schema.org/",
+   "geo": "http://www.opengis.net/ont/geosparql#",
+   "unit": "http://codes.wmo.int/common/unit/",
+   "@vocab": "https://api.weather.gov/ontology#",
+   "geometry": {
+    "@id": "s:GeoCoordinates",
+    "@type": "geo:wktLiteral"
+   },
+   "city": "s:addressLocality",
+   "state": "s:addressRegion",
+   "distance": {
+    "@id": "s:Distance",
+    "@type": "s:QuantitativeValue"
+   },
+   "bearing": {
+    "@type": "s:QuantitativeValue"
+   },
+   "value": {
+    "@id": "s:value"
+   },
+   "unitCode": {
+    "@id": "s:unitCode",
+    "@type": "@id"
+   },
+   "forecastOffice": {
+    "@type": "@id"
+   },
+   "forecastGridData": {
+    "@type": "@id"
+   },
+   "publicZone": {
+    "@type": "@id"
+   },
+   "county": {
+    "@type": "@id"
+   },
+   "observationStations": {
+    "@container": "@list",
+    "@type": "@id"
+   }
+  }
+ ],
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "id": "https://api.weather.gov/stations/KSGU",
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -113.50561,
+     37.0451
+    ]
+   },
+   "properties": {
+    "@id": "https://api.weather.gov/stations/KSGU",
+    "@type": "wx:ObservationStation",
+    "elevation": {
+     "unitCode": "wmoUnit:m",
+     "value": 875.3856
+    },
+    "stationIdentifier": "KSGU",
+    "name": "St George Regional Airport",
+    "timeZone": "America/Denver",
+    "provider": "ASOS-HFM",
+    "subProvider": "",
+    "distance": {
+     "unitCode": "wmoUnit:m",
+     "value": 36721.405757041
+    },
+    "bearing": {
+     "unitCode": "wmoUnit:degree_(angle)",
+     "value": 163
+    },
+    "forecast": "https://api.weather.gov/zones/forecast/UTZ123",
+    "county": "https://api.weather.gov/zones/county/UTC053",
+    "fireWeatherZone": "https://api.weather.gov/zones/fire/UTZ497"
+   }
+  },
+  {
+   "id": "https://api.weather.gov/stations/KCDC",
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -113.09695,
+     37.70675
+    ]
+   },
+   "properties": {
+    "@id": "https://api.weather.gov/stations/KCDC",
+    "@type": "wx:ObservationStation",
+    "elevation": {
+     "unitCode": "wmoUnit:m",
+     "value": 1701.0888
+    },
+    "stationIdentifier": "KCDC",
+    "name": "Cedar City Municipal Airport",
+    "timeZone": "America/Denver",
+    "provider": "ASOS-HFM",
+    "subProvider": "",
+    "distance": {
+     "unitCode": "wmoUnit:m",
+     "value": 60306.071405029
+    },
+    "bearing": {
+     "unitCode": "wmoUnit:degree_(angle)",
+     "value": 50
+    },
+    "forecast": "https://api.weather.gov/zones/forecast/UTZ122",
+    "county": "https://api.weather.gov/zones/county/UTC021",
+    "fireWeatherZone": "https://api.weather.gov/zones/fire/UTZ496"
+   }
+  },
+  {
+   "id": "https://api.weather.gov/stations/KKNB",
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -112.53,
+     37.01
+    ]
+   },
+   "properties": {
+    "@id": "https://api.weather.gov/stations/KKNB",
+    "@type": "wx:ObservationStation",
+    "elevation": {
+     "unitCode": "wmoUnit:m",
+     "value": 1482.852
+    },
+    "stationIdentifier": "KKNB",
+    "name": "KANAB MUNICIPAL AIRPORT",
+    "timeZone": "America/Denver",
+    "provider": "NonFedAWOS",
+    "subProvider": "TG",
+    "distance": {
+     "unitCode": "wmoUnit:m",
+     "value": 104530.4847437
+    },
+    "bearing": {
+     "unitCode": "wmoUnit:degree_(angle)",
+     "value": 111
+    },
+    "forecast": "https://api.weather.gov/zones/forecast/UTZ128",
+    "county": "https://api.weather.gov/zones/county/UTC025",
+    "fireWeatherZone": "https://api.weather.gov/zones/fire/UTZ498"
+   }
+  }
+ ],
+ "observationStations": [
+  "https://api.weather.gov/stations/KSGU",
+  "https://api.weather.gov/stations/KCDC",
+  "https://api.weather.gov/stations/KKNB"
+ ],
+ "pagination": {
+  "next": "https://api.weather.gov/stations?id%5B0%5D=CRN&id%5B1%5D=K41U&id%5B2%5D=K74V&id%5B3%5D=KBCE&id%5B4%5D=KBMC&id%5B5%5D=KCDC&id%5B6%5D=KDTA&id%5B7%5D=KENV&id%5B8%5D=KEVW&id%5B9%5D=KFOM&id%5B10%5D=KHCR&id%5B11%5D=KHVE&id%5B12%5D=KKNB&id%5B13%5D=KLGU&id%5B14%5D=KMLF&id%5B15%5D=KOGD&id%5B16%5D=KPUC&id%5B17%5D=KPVU&id%5B18%5D=KRIF&id%5B19%5D=KSGU&id%5B20%5D=KSLC&id%5B21%5D=KSVR&id%5B22%5D=KTVY&id%5B23%5D=KU14&id%5B24%5D=KU52&id%5B25%5D=KU69&id%5B26%5D=UT224&cursor=eyJzIjo1MDB9"
+ }
+}

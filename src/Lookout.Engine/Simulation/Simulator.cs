@@ -1,4 +1,3 @@
-using System.Text;
 using Lookout.Engine.Rules;
 using Lookout.Engine.Scenarios;
 using Lookout.Engine.Spread;
@@ -22,8 +21,8 @@ public static class Simulator
 
         var frames = new List<Frame>();
         var alerts = new List<AlertEvent>();
-        var latches = scenario.Crews.ToDictionary(c => c.Id, _ => new AlertLatch(scenario.Alerts.DowngradeHoldMin));
-        var progress = new Dictionary<string, Progress>();
+        var monitors = scenario.Crews.ToDictionary(c => c.Id, c => new CrewMonitor(c.Id, scenario.Alerts, grid));
+        string ClockOf(double m) => Clock(scenario, m);
 
         var steps = (int)Math.Round(scenario.DurationMin / scenario.StepMin);
         for (var i = 0; i <= steps; i++)
@@ -40,75 +39,20 @@ public static class Simulator
                 var fix = crew.LastFixAt(t);
                 var known = fix?.Position ?? crew.TruePositionAt(0);
 
-                var cutoff = grid is null
-                    ? CutoffRule.Evaluate(profile, zone, known, front, wind, scenario.Alerts, t)
-                    : GridCutoffRule.Evaluate(grid, profile, zone, known, front, wind, scenario.Alerts, t);
-                var enRoute = IsEnRoute(profile, known, fix?.T, progress, crew.Id);
-                var findings = new List<Finding>();
-                if (cutoff.Level > AlertLevel.None)
-                    findings.Add(new Finding(CutoffRule.Id, cutoff.Level, CutoffSummary(scenario, cutoff, profile.Route, t, enRoute)));
-                if (!cutoff.InSafetyZone && UnburnedFuelRule.Evaluate(known, front, wind, scenario.Alerts) is { } wo11)
-                    findings.Add(wo11);
-                if (CommsRule.Evaluate(t, fix?.T, scenario.Alerts) is { } comms)
-                    findings.Add(comms);
-
-                var level = findings.Count == 0 ? AlertLevel.None : findings.Max(f => f.Level);
+                var a = monitors[crew.Id].Assess(profile, zone, known, fix?.T, front, wind, t, ClockOf);
                 var truth = crew.TruePositionAt(t);
                 crewStates.Add(new CrewState(
-                    crew.Id, truth, known, fix?.T, enRoute, cutoff, findings, level,
+                    crew.Id, truth, known, fix?.T, a.EnRoute, a.Cutoff, a.Findings, a.RawLevel,
                     BurnedOver: !front.IsEmpty && front.Contains(front.Factory.CreatePoint(truth))));
 
-                var latch = latches[crew.Id];
-                var before = latch.Reported;
-                if (latch.Update(level, t))
-                    alerts.Add(BuildAlert(scenario, crew, profile.Route, t, before, latch.Reported, cutoff, findings));
+                if (a.Change is { } c)
+                    alerts.Add(new AlertEvent(t, scenario.Start.AddMinutes(t), crew.Id, profile.Route.Id, c.From, c.To, c.Text, c.Bytes));
             }
 
             frames.Add(new Frame(t, front, wind, crewStates));
         }
 
         return new SimulationResult(scenario, frames, alerts, ScoreRoutes(scenario), ScoreCrews(scenario, frames));
-    }
-
-    private const double MinProgressM = 10.0;
-
-    /// <summary>
-    /// A crew is en route when its latest fix is further along the escape route than the fix before
-    /// it. Then "leave by" no longer applies; the useful numbers are arrival time and margin.
-    /// </summary>
-    private static bool IsEnRoute(
-        RouteProfile profile, Coordinate known, double? fixMin, Dictionary<string, Progress> progress, string crewId)
-    {
-        if (fixMin is null) return false;
-        var prev = progress.GetValueOrDefault(crewId);
-        if (prev is not null && prev.FixMin == fixMin) return prev.Moving;
-        var s = profile.Project(known);
-        var moving = prev is not null && s - prev.S > MinProgressM;
-        progress[crewId] = new Progress(fixMin.Value, s, moving);
-        return moving;
-    }
-
-    private sealed record Progress(double FixMin, double S, bool Moving);
-
-    private static string CutoffSummary(Scenario s, CutoffResult c, EscapeRoute route, double t, bool enRoute) =>
-        enRoute
-            ? $"En route via {route.Id} to {c.SafetyZoneId}, arrive {Clock(s, t + c.CrewTravelMin)}, margin {c.MarginMin:0} min"
-            : c.SlackMin <= 0
-            ? $"LEAVE NOW via {route.Id} to {c.SafetyZoneId}. Fire at route {Clock(s, c.FireEtaAtCutMin)}, margin {c.MarginMin:0} min"
-            : $"Leave by {Clock(s, c.LeaveByMin)} via {route.Id} to {c.SafetyZoneId}. Fire at route {Clock(s, c.FireEtaAtCutMin)}";
-
-    private static AlertEvent BuildAlert(
-        Scenario s, Crew crew, EscapeRoute route, double t, AlertLevel from, AlertLevel to,
-        CutoffResult cutoff, List<Finding> findings)
-    {
-        string text;
-        if (to == AlertLevel.None)
-            text = cutoff.InSafetyZone ? $"{crew.Id} in safety zone {cutoff.SafetyZoneId}. All clear." : $"{crew.Id} no active alerts.";
-        else
-            text = $"{crew.Id} {to.ToString().ToUpperInvariant()}: " +
-                   string.Join(". ", findings.OrderByDescending(f => f.Level).Select(f => f.Summary));
-
-        return new AlertEvent(t, s.Start.AddMinutes(t), crew.Id, route.Id, from, to, text, Encoding.UTF8.GetByteCount(text));
     }
 
     /// <summary>Truth: when the real fire first touches each route.</summary>

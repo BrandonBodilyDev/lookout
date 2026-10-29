@@ -58,6 +58,9 @@ namespace Lookout.Api.Data.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
+                    b.Property<int>("LinkSeq")
+                        .HasColumnType("integer");
+
                     b.Property<DateTimeOffset>("RaisedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -93,6 +96,9 @@ namespace Lookout.Api.Data.Migrations
                         .HasColumnName("xmin");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("IncidentId", "CrewId", "LinkSeq")
+                        .IsUnique();
 
                     b.HasIndex("IncidentId", "CrewId", "State");
 
@@ -265,6 +271,11 @@ namespace Lookout.Api.Data.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("xid")
                         .HasColumnName("xmin");
+
+                    b.Property<string>("WindSource")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
 
                     b.HasKey("Id");
 

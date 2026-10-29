@@ -21,11 +21,14 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
     public async Task<AlertRecord> RaiseAsync(Guid incidentId, string crewId, AlertLevel level, string text, int bytes, double scenarioMin, CancellationToken ct = default)
     {
         var now = clock.GetUtcNow();
+        var lastSeq = await db.Alerts.Where(a => a.IncidentId == incidentId && a.CrewId == crewId)
+            .MaxAsync(a => (int?)a.LinkSeq, ct) ?? 0;
         var alert = new AlertRecord
         {
             Id = Guid.CreateVersion7(),
             IncidentId = incidentId,
             CrewId = crewId,
+            LinkSeq = lastSeq % ushort.MaxValue + 1,
             Level = level,
             RequiresAck = NeedsAck(level),
             Text = text,
@@ -80,6 +83,29 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
         alert.AcknowledgedAt = now;
         alert.AcknowledgedBy = actor.Name;
         await Save(alert, expectedVersion, ct);
+        return alert;
+    }
+
+    /// <summary>
+    /// A crew device acknowledged by link sequence number. Devices do not know row versions, so the
+    /// current version is used; a duplicate or late ack (alert already closed) is recorded and ignored.
+    /// </summary>
+    public async Task<AlertRecord?> AcknowledgeFromDeviceAsync(Guid incidentId, string crewId, int linkSeq, CancellationToken ct = default)
+    {
+        var alert = await db.Alerts.SingleOrDefaultAsync(a => a.IncidentId == incidentId && a.CrewId == crewId && a.LinkSeq == linkSeq, ct);
+        var device = new Actor($"device-{crewId.ToLowerInvariant()}", Roles.Crew, crewId);
+        var now = clock.GetUtcNow();
+        if (alert is null) return null;
+        if (!AlertStateMachine.TryApply(alert.State, AlertAction.Acknowledge, out _))
+        {
+            Audit(alert, "alert.ack-ignored", device, now, new { state = alert.State.ToString(), linkSeq });
+            await db.SaveChangesAsync(ct);
+            return null;
+        }
+        Transition(alert, AlertAction.Acknowledge, device, now, new { linkSeq, via = "uplink" });
+        alert.AcknowledgedAt = now;
+        alert.AcknowledgedBy = device.Name;
+        await Save(alert, alert.Version, ct);
         return alert;
     }
 
@@ -162,11 +188,11 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
 }
 
 public sealed record AlertDto(
-    Guid Id, string CrewId, string Level, string State, bool RequiresAck, string Text, int Bytes, double ScenarioMin,
+    Guid Id, string CrewId, int LinkSeq, string Level, string State, bool RequiresAck, string Text, int Bytes, double ScenarioMin,
     DateTimeOffset RaisedAt, DateTimeOffset? SentAt, int SendCount, DateTimeOffset? EscalatedAt,
     DateTimeOffset? AcknowledgedAt, string? AcknowledgedBy, string? CancelReason, uint Version)
 {
     public static AlertDto From(AlertRecord a) => new(
-        a.Id, a.CrewId, a.Level.ToString().ToLowerInvariant(), a.State.ToString().ToLowerInvariant(), a.RequiresAck, a.Text, a.Bytes,
+        a.Id, a.CrewId, a.LinkSeq, a.Level.ToString().ToLowerInvariant(), a.State.ToString().ToLowerInvariant(), a.RequiresAck, a.Text, a.Bytes,
         a.ScenarioMin, a.RaisedAt, a.SentAt, a.SendCount, a.EscalatedAt, a.AcknowledgedAt, a.AcknowledgedBy, a.CancelReason, a.Version);
 }

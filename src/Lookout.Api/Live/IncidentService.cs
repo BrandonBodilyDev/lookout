@@ -13,7 +13,7 @@ public sealed class IncidentService(LookoutDb db, ScenarioStore scenarios, TimeP
 {
     private static readonly GeometryFactory Wgs84 = new(new PrecisionModel(), 4326);
 
-    public async Task<Incident> CreateAsync(string scenarioId, double clockRate, Actor actor, CancellationToken ct = default)
+    public async Task<Incident> CreateAsync(string scenarioId, double clockRate, Actor actor, WindSource windSource = WindSource.Field, CancellationToken ct = default)
     {
         var s = scenarios.Load(scenarioId) ?? throw new NotFoundException($"Scenario {scenarioId}");
         if (clockRate is <= 0 or > 60) throw new ConflictException("Clock rate must be between 0 and 60 scenario minutes per real minute.");
@@ -26,6 +26,7 @@ public sealed class IncidentService(LookoutDb db, ScenarioStore scenarios, TimeP
             CreatedAt = now,
             StartedAt = now,
             ClockRate = clockRate,
+            WindSource = windSource,
         };
         db.Incidents.Add(incident);
 
@@ -40,7 +41,7 @@ public sealed class IncidentService(LookoutDb db, ScenarioStore scenarios, TimeP
                 Path = Wgs84.CreateLineString(r.Vertices.Select(v => { var (lon, lat) = s.Frame.ToLonLat(v); return (Coordinate)new CoordinateZ(lon, lat, v.Z); }).ToArray()),
             });
 
-        Audit(incident.Id, "incident.created", actor, now, new { scenarioId, clockRate });
+        Audit(incident.Id, "incident.created", actor, now, new { scenarioId, clockRate, windSource = windSource.ToString() });
         await db.SaveChangesAsync(ct);
         return incident;
     }

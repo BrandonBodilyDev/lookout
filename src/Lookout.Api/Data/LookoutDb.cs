@@ -20,6 +20,7 @@ public sealed class LookoutDb(DbContextOptions<LookoutDb> options) : DbContext(o
         {
             e.ToTable("incidents");
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(16);
+            e.Property(x => x.WindSource).HasConversion<string>().HasMaxLength(8);
             e.Property(x => x.Version).IsRowVersion();
         });
 
@@ -57,6 +58,7 @@ public sealed class LookoutDb(DbContextOptions<LookoutDb> options) : DbContext(o
             e.Property(x => x.Text).HasMaxLength(270);
             e.Property(x => x.Version).IsRowVersion();
             e.HasIndex(x => new { x.IncidentId, x.CrewId, x.State });
+            e.HasIndex(x => new { x.IncidentId, x.CrewId, x.LinkSeq }).IsUnique();
             e.HasOne<Incident>().WithMany().HasForeignKey(x => x.IncidentId);
         });
 

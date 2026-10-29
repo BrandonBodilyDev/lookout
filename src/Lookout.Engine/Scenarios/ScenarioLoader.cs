@@ -73,6 +73,7 @@ public static class ScenarioLoader
                 Size = c.Size,
                 Track = track,
                 Fixes = SampleFixes(track, c.FixIntervalS / 60.0, c.CommsGaps, f.DurationMin),
+                CommsGaps = c.CommsGaps.Select(g => (g[0], g[1])).ToList(),
             };
         }).ToList();
 

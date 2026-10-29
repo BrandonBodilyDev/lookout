@@ -62,6 +62,10 @@ public sealed class Crew
     public required IReadOnlyList<(double T, Coordinate Position)> Track { get; init; }
     /// <summary>The GPS fixes that actually reach the server (track sampled at the fix interval, minus comms gaps).</summary>
     public required IReadOnlyList<(double T, Coordinate Position)> Fixes { get; init; }
+    /// <summary>Scenario minutes when the crew's device is out of contact, both directions.</summary>
+    public IReadOnlyList<(double From, double To)> CommsGaps { get; init; } = [];
+
+    public bool InCommsGap(double t) => CommsGaps.Any(g => t > g.From && t < g.To);
 
     public Coordinate TruePositionAt(double t) => Interpolate(Track, t);
 

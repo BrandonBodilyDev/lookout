@@ -17,10 +17,14 @@ public sealed class Incident
     /// <summary>Scenario minutes per real minute (1 = real time; the demo runs faster).</summary>
     public double ClockRate { get; set; } = 1;
     public IncidentStatus Status { get; set; } = IncidentStatus.Running;
+    /// <summary>Where the engine's wind comes from: the field (scenario/drone station) or the National Weather Service.</summary>
+    public WindSource WindSource { get; set; } = WindSource.Field;
     public uint Version { get; set; }
 }
 
 public enum IncidentStatus { Running, Closed }
+
+public enum WindSource { Field, Nws }
 
 public sealed class CrewRecord
 {
@@ -59,6 +63,8 @@ public sealed class AlertRecord
     public Guid Id { get; set; }
     public Guid IncidentId { get; set; }
     public required string CrewId { get; set; }
+    /// <summary>Per-crew sequence number carried on the link; a device acknowledges by this number.</summary>
+    public int LinkSeq { get; set; }
     public AlertLevel Level { get; set; }
     public AlertState State { get; set; } = AlertState.Queued;
     public bool RequiresAck { get; set; }

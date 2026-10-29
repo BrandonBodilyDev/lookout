@@ -82,30 +82,13 @@ public static class TimelineDto
         };
     }
 
-    /// <summary>GeoJSON MultiPolygon coordinates: polygons, then rings (exterior first), then [lon, lat].</summary>
-    private static double[][][][] MultiPolygon(LocalFrame f, Geometry g)
-    {
-        if (g.IsEmpty) return [];
-        return Enumerable.Range(0, g.NumGeometries)
-            .Select(g.GetGeometryN)
-            .OfType<Polygon>()
-            .Select(p => new[] { Ring(f, p.ExteriorRing) }.Concat(p.InteriorRings.Select(r => Ring(f, r))).ToArray())
-            .ToArray();
-    }
-
-    private static double[][] Ring(LocalFrame f, LineString ring) =>
-        ring.Coordinates.Select(c => Point(f, c)).ToArray();
-
-    private static double[] Point(LocalFrame f, Coordinate c)
-    {
-        var (lon, lat) = f.ToLonLat(c);
-        return [R6(lon), R6(lat)];
-    }
-
     private static string? ClockOrNull(Lookout.Engine.Scenarios.Scenario s, double? minute) =>
         minute is { } m ? s.Start.AddMinutes(m).ToString("HH:mm") : null;
 
     private static double R6(double v) => Math.Round(v, 6);
 
-    private static double? Finite(double v) => double.IsFinite(v) ? Math.Round(v, 2) : null;
+    private static double[][][][] MultiPolygon(LocalFrame f, Geometry g) => GeoDto.MultiPolygon(f, g);
+    private static double[][] Ring(LocalFrame f, LineString ring) => GeoDto.Ring(f, ring);
+    private static double[] Point(LocalFrame f, Coordinate c) => GeoDto.Point(f, c);
+    private static double? Finite(double v) => GeoDto.Finite(v);
 }
