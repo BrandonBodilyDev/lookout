@@ -43,7 +43,9 @@ Truth scorecard
   ALPHA: reached safety zone 14:34, burnover never, first cut-off warning 8.0 min before the cut
 ```
 
-The scenario is also the acceptance test. [`DemoScenarioTests`](tests/Lookout.Engine.Tests/DemoScenarioTests.cs) fails the build if the warning comes later than 6 minutes before the cut, if Alpha is burned over, if Alpha's level flaps back up while walking out, or if any alert exceeds 270 bytes.
+A second scenario, [`pine-valley-steady-north.yaml`](scenarios/pine-valley-steady-north.yaml), is the control: the same fire, terrain and crews with no wind shift. Lookout must raise no alerts at all there, and a test enforces it. A warning system that cries wolf gets ignored.
+
+The demo scenario is also the acceptance test. [`DemoScenarioTests`](tests/Lookout.Engine.Tests/DemoScenarioTests.cs) fails the build if the warning comes later than 6 minutes before the cut, if Alpha is burned over, if Alpha's level flaps back up while walking out, or if any alert exceeds 270 bytes.
 
 ![The dashboard at 14:20: Crew Alpha is critical and told to leave now. The dashed leave-now zone already contains the fire front.](docs/images/alert-1420.png)
 

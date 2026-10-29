@@ -1,0 +1,103 @@
+# Lookout control scenario: the demo's fire, terrain and crews with no wind shift.
+# The fire keeps running south, away from both crews. Lookout should stay quiet: any cut-off alert
+# here is a false alarm. DemoScenarioTests checks that.
+#
+# Fictional incident on real terrain: pinyon-juniper hills between Veyo and Pine Valley,
+# north of St. George, Utah. Route elevations are USGS 3DEP values from the Elevation Point
+# Query Service (epqs.nationalmap.gov), sampled 2026-10-28. Coordinates are [lon, lat].
+#
+id: pine-valley-steady-north
+name: Pine Valley, steady north wind (control)
+description: >-
+  Control case: the same fire and crews under a steady north wind. The fire runs south, away from
+  both crews, and Lookout should raise no cut-off alerts.
+start: "2026-07-14T14:00:00-06:00"
+duration_min: 45
+step_min: 0.5
+origin: { lon: -113.620, lat: 37.360 }
+
+# 30 m elevation grid in this scenario's local frame (metres east/north of origin), built with
+#   dotnet run --project src/Lookout.Sim -- dem scenarios/pine-valley-wind-shift.yaml scenarios/terrain/pine-valley.asc -2400 1600 -2000 1800 30
+# from AWS Terrain Tiles (Terrarium encoding; USGS 3DEP in the US). Fire spread and crew travel both use it.
+terrain:
+  file: terrain/pine-valley.asc
+  source: AWS Terrain Tiles (USGS 3DEP), z14, sampled 2026-10-28
+
+fire:
+  ignition: [-113.630172, 37.358203]
+  ignition_min: -30          # ignited 13:30, 30 minutes before the scenario opens
+
+# Piecewise-constant weather. midflame_wind_ms shapes the ellipse (FARSITE eq. 13);
+# head_rate_m_per_min is an input, from the sourced ranges in docs/assumptions.md.
+wind:
+  - { start_min: -30, from_deg: 0,   midflame_wind_ms: 3.0, head_rate_m_per_min: 20 }
+
+safety_zones:
+  - id: SZ-1
+    name: Upper bench clearing
+    polygon:
+      - [-113.614688, 37.366558]
+      - [-113.612654, 37.366558]
+      - [-113.612654, 37.368175]
+      - [-113.614688, 37.368175]
+  - id: SZ-2
+    name: North wash two-track
+    polygon:
+      - [-113.629833, 37.371768]
+      - [-113.628024, 37.371768]
+      - [-113.628024, 37.373205]
+      - [-113.629833, 37.373205]
+
+# Escape routes as the IC drew them: [lon, lat, ground elevation m]. Each ends in its safety zone.
+routes:
+  - id: ER-1
+    name: Alpha ridge trail (uphill)
+    safety_zone: SZ-1
+    vertices:
+      - [-113.620000, 37.359102, 1582.3]
+      - [-113.618305, 37.361347, 1609.1]
+      - [-113.616609, 37.363593, 1614.5]
+      - [-113.614914, 37.365839, 1655.1]
+      - [-113.613784, 37.367186, 1660.1]
+  - id: ER-2
+    name: Bravo wash (downhill)
+    safety_zone: SZ-2
+    vertices:
+      - [-113.630172, 37.368085, 1624.1]
+      - [-113.629607, 37.370331, 1572.5]
+      - [-113.629041, 37.372127, 1552.1]
+
+# Crew truth tracks: [minute, lon, lat], interpolated. The engine never sees these directly,
+# only the fixes sampled from them every fix_interval_s, minus any comms gaps.
+crews:
+  - id: ALPHA
+    name: Crew Alpha (Type 2 IA)
+    route: ER-1
+    pace: moderate
+    size: 20
+    fix_interval_s: 60
+    track:
+      - [0.0,  -113.620000, 37.359102]
+      - [45.0, -113.620000, 37.359102]   # works at the same spot all shift
+    comms_gaps: []
+  - id: BRAVO
+    name: Crew Bravo (hand crew)
+    route: ER-2
+    pace: moderate
+    size: 20
+    fix_interval_s: 60
+    track:
+      - [0.0,  -113.630172, 37.368085]
+      - [45.0, -113.630172, 37.368085]
+    comms_gaps: []
+
+alerts:
+  buffer_min: 10
+  watch_min: 30
+  warning_min: 15
+  critical_min: 5
+  comms_stale_min: 5
+  comms_lost_min: 15
+  unburned_fuel_distance_m: 500
+  unburned_fuel_half_angle_deg: 45
+  off_trail_factor: 0.5
