@@ -8,6 +8,7 @@ namespace Lookout.Api;
 public sealed class ScenarioStore(string directory)
 {
     private readonly ConcurrentDictionary<string, Lazy<SimulationResult>> _runs = new();
+    private readonly ConcurrentDictionary<string, Lazy<Scenario>> _scenarios = new();
 
     public string Directory { get; } = directory;
 
@@ -16,11 +17,19 @@ public sealed class ScenarioStore(string directory)
             .Select(p => ScenarioLoader.LoadFile(p, loadTerrain: false))
             .OrderBy(s => s.Name);
 
+    /// <summary>A scenario with its terrain loaded, or null if no such file.</summary>
+    public Scenario? Load(string id)
+    {
+        var path = Path.Combine(Directory, $"{id}.yaml");
+        if (!id.All(ch => char.IsLetterOrDigit(ch) || ch == '-') || !File.Exists(path)) return null;
+        return _scenarios.GetOrAdd(id, _ => new Lazy<Scenario>(() => ScenarioLoader.LoadFile(path))).Value;
+    }
+
     public SimulationResult? Run(string id)
     {
         var path = Path.Combine(Directory, $"{id}.yaml");
         if (!id.All(ch => char.IsLetterOrDigit(ch) || ch == '-') || !File.Exists(path)) return null;
-        return _runs.GetOrAdd(id, _ => new Lazy<SimulationResult>(() => Simulator.Run(ScenarioLoader.LoadFile(path)))).Value;
+        return _runs.GetOrAdd(id, _ => new Lazy<SimulationResult>(() => Simulator.Run(Load(id)!))).Value;
     }
 
     /// <summary>Scenario folder: the configured path, else the repo's scenarios/ found by walking up from the app.</summary>
