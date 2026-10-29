@@ -150,6 +150,28 @@ public sealed class DeviceTests(LookoutAppFixture fx)
         Assert.Equal(device, row.GetProperty("deviceId").GetString());
         Assert.Equal(77, row.GetProperty("batteryPercent").GetInt32());
         Assert.NotEqual(JsonValueKind.Null, row.GetProperty("lastHeard").ValueKind);
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("assignedBy").ValueKind); // for the IC only
+
+        // Another crew of the incident does not see Alpha's device.
+        Assert.Empty((await fx.Client("crew", "BRAVO", incident).GetFromJsonAsync<JsonElement>($"/api/incidents/{incident}/devices", ct)).EnumerateArray());
+    }
+
+    [Fact]
+    public async Task A_device_still_bound_to_a_closed_incident_is_listed_as_unassigned()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var incident = await CreateIncidentAsync();
+        var device = NewDeviceId();
+        var ic = fx.Client("ic");
+        Assert.Equal(HttpStatusCode.OK, (await ic.PutAsync($"/api/incidents/{incident}/crews/ALPHA/devices/{device}", null, ct)).StatusCode);
+        await using (var scope = fx.App.Services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<LookoutDb>().Incidents.Where(i => i.Id == incident)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.Status, IncidentStatus.Closed), ct);
+
+        // Yesterday's messenger switched on today: its reports are dropped, so the IC must see it.
+        fx.App.Services.GetRequiredService<DeviceActivity>().Heard(device, 60);
+        Assert.Contains((await ic.GetFromJsonAsync<JsonElement>("/api/devices/unassigned", ct)).EnumerateArray(),
+            d => d.GetProperty("deviceId").GetString() == device);
     }
 
     [Fact]

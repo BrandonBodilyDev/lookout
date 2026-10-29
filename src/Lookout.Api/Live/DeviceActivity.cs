@@ -3,7 +3,8 @@ using System.Collections.Concurrent;
 namespace Lookout.Api.Live;
 
 /// <param name="BatteryPercent">From the device's latest position report; null if it has only sent acks.</param>
-public sealed record DeviceHeard(string DeviceId, DateTimeOffset LastHeard, int? BatteryPercent, long Messages);
+/// <param name="Assigned">The device directory had it when it was last heard; evicted last.</param>
+public sealed record DeviceHeard(string DeviceId, DateTimeOffset LastHeard, int? BatteryPercent, long Messages, bool Assigned = false);
 
 /// <summary>
 /// When each link device was last heard, assigned or not. Kept in memory: it answers "is this device
@@ -16,15 +17,24 @@ public sealed class DeviceActivity(TimeProvider clock)
     public const int MaxDevices = 10_000;
     private readonly ConcurrentDictionary<string, DeviceHeard> _heard = new();
 
+    /// <summary>Called from the live loop only (one writer); HTTP requests read concurrently.</summary>
     public void Heard(string deviceId, int? batteryPercent)
     {
         var now = clock.GetUtcNow();
         _heard.AddOrUpdate(deviceId,
             id => new DeviceHeard(id, now, batteryPercent, 1),
-            (_, d) => new DeviceHeard(d.DeviceId, now, batteryPercent ?? d.BatteryPercent, d.Messages + 1));
+            (_, d) => d with { LastHeard = now, BatteryPercent = batteryPercent ?? d.BatteryPercent, Messages = d.Messages + 1 });
+        // Evict in one batch down to 90%, unassigned and oldest first: a flood of made-up ids costs one
+        // sort per thousand messages, and cannot push out the crews' own devices while strays remain.
         if (_heard.Count > MaxDevices)
-            foreach (var old in _heard.Values.OrderBy(d => d.LastHeard).Take(_heard.Count - MaxDevices))
+            foreach (var old in _heard.Values.OrderBy(d => d.Assigned).ThenBy(d => d.LastHeard).Take(_heard.Count - MaxDevices * 9 / 10).ToList())
                 _heard.TryRemove(old.DeviceId, out _);
+    }
+
+    /// <summary>The device directory knows this device; keep it over strays when evicting.</summary>
+    public void MarkAssigned(string deviceId)
+    {
+        if (_heard.TryGetValue(deviceId, out var d) && !d.Assigned) _heard[deviceId] = d with { Assigned = true };
     }
 
     public DeviceHeard? Get(string deviceId) => _heard.GetValueOrDefault(deviceId);

@@ -35,6 +35,9 @@ public class LookoutAppFixture : IAsyncLifetime
     /// <summary>Settings on top of the common ones. By default the live runner is off: tests drive the services directly.</summary>
     protected virtual void Configure(IWebHostBuilder b) => b.UseSetting("Lookout:Live:Enabled", "false");
 
+    /// <summary>Runs once the app has started, before any test.</summary>
+    protected virtual ValueTask AfterStartAsync() => ValueTask.CompletedTask;
+
     public async ValueTask InitializeAsync()
     {
         await _db.StartAsync();
@@ -64,6 +67,7 @@ public class LookoutAppFixture : IAsyncLifetime
             Configure(b);
         });
         _ = App.Server; // starts the host, which applies migrations
+        await AfterStartAsync();
     }
 
     public HttpClient Client(string role, string? crewId = null, Guid? incidentId = null)

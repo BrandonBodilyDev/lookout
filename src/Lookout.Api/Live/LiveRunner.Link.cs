@@ -51,8 +51,12 @@ public sealed partial class LiveRunner
                     log.LogWarning("Uplink from unregistered device {Device} dropped; assign it to a crew first", dev.DeviceId);
                 return;
             }
+            activity.MarkAssigned(dev.DeviceId);
             var crewRt = _incidents.GetValueOrDefault(owner.Incident) ?? await LoadAsync(owner.Incident, ct);
             if (crewRt is not null) await HandleUplinkAsync(crewRt, owner.Crew, payload, ct, dev.DeviceId);
+            else if (_unknownDevicesLogged.Add(dev.DeviceId))
+                log.LogWarning("Uplink from device {Device} dropped: it is still assigned to incident {Incident}, which is not running; assign it to a crew in a running incident",
+                    dev.DeviceId, owner.Incident);
             return;
         }
 

@@ -132,6 +132,7 @@ app.MapGet("/api/health/ready", async (IServiceProvider sp, TimeProvider clock, 
     var checks = new List<LiveHealth.Check>();
     if (live) checks.Add(await LiveHealth.DatabaseCheckAsync(sp, ct));
     if (runner) checks.AddRange(sp.GetRequiredService<LiveHealth>().Evaluate(clock.GetUtcNow(), sp.GetRequiredService<LiveOptions>()));
+    else if (live) checks.Add(new("runner", false, "live runner disabled (Lookout:Live:Enabled=false): no crew is being watched"));
     var ready = checks.All(c => c.Ok);
     return Results.Json(new { status = ready ? "ready" : "not ready", checks }, statusCode: ready ? 200 : 503);
 });

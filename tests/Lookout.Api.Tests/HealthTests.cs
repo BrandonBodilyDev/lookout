@@ -46,6 +46,19 @@ public sealed class LiveHealthTests
     }
 
     [Fact]
+    public void A_flood_of_stray_ids_evicts_strays_in_a_batch_and_keeps_assigned_devices()
+    {
+        var activity = new DeviceActivity(TimeProvider.System);
+        activity.Heard("CREW-DEVICE", 90);
+        activity.MarkAssigned("CREW-DEVICE");
+        for (var i = 0; i <= DeviceActivity.MaxDevices; i++) activity.Heard($"STRAY-{i}", null);
+        Assert.NotNull(activity.Get("CREW-DEVICE"));
+        Assert.Null(activity.Get("STRAY-0")); // the oldest strays went
+        // One batch trimmed to 90%; the ids heard after it are kept until the next batch.
+        Assert.InRange(activity.HeardWithin(TimeSpan.FromHours(1)).Count, DeviceActivity.MaxDevices * 9 / 10, DeviceActivity.MaxDevices * 9 / 10 + 10);
+    }
+
+    [Fact]
     public void Loopback_mode_has_no_broker_check()
     {
         var h = new LiveHealth { DevicesLoaded = true };
@@ -58,15 +71,14 @@ public sealed class LiveHealthTests
 public sealed class ReadinessEndpointTests(LookoutAppFixture fx)
 {
     [Fact]
-    public async Task Ready_reports_each_check_and_needs_no_sign_in()
+    public async Task With_the_runner_disabled_the_api_is_not_ready_to_warn_anyone()
     {
-        // The test host runs without the live runner, so only the database is checked.
+        // This test host has a database but its live runner is off: reachable, yet watching no crew.
         var res = await fx.App.CreateClient().GetAsync("/api/health/ready", TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
-        var body = await res.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
-        Assert.Equal("ready", body.GetProperty("status").GetString());
-        var db = Assert.Single(body.GetProperty("checks").EnumerateArray());
-        Assert.Equal("database", db.GetProperty("name").GetString());
-        Assert.True(db.GetProperty("ok").GetBoolean());
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, res.StatusCode);
+        var checks = (await res.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("checks").EnumerateArray()
+            .ToDictionary(c => c.GetProperty("name").GetString()!, c => c.GetProperty("ok").GetBoolean());
+        Assert.True(checks["database"]);
+        Assert.False(checks["runner"]);
     }
 }

@@ -44,14 +44,17 @@ public static class LiveEndpoints
                 }));
         }
 
-        // Devices reporting in the last 30 minutes that no incident has: a crew switched on a messenger
-        // nobody assigned. Their reports are being dropped, so the IC needs to see them.
+        // Devices reporting in the last 30 minutes that no running incident has: a crew switched on a
+        // messenger nobody assigned, or one still bound to a closed incident. Their reports are being
+        // dropped, so the IC needs to see them.
         app.MapGet("/api/devices/unassigned", async (LookoutDb db, DeviceActivity activity, CancellationToken ct) =>
         {
             var heard = activity.HeardWithin(TimeSpan.FromMinutes(30));
             var ids = heard.Select(h => h.DeviceId).ToList();
-            var assigned = (await db.Devices.AsNoTracking().Where(d => ids.Contains(d.DeviceId)).Select(d => d.DeviceId).ToListAsync(ct)).ToHashSet();
-            return heard.Where(h => !assigned.Contains(h.DeviceId));
+            var live = (await db.Devices.AsNoTracking()
+                .Where(d => ids.Contains(d.DeviceId) && db.Incidents.Any(i => i.Id == d.IncidentId && i.Status == IncidentStatus.Running))
+                .Select(d => d.DeviceId).ToListAsync(ct)).ToHashSet();
+            return heard.Where(h => !live.Contains(h.DeviceId));
         }).RequireAuthorization(Policies.Command);
 
         var api = app.MapGroup("/api/incidents").AddEndpointFilter<ProblemFilter>().AddEndpointFilter<CrewIncidentScope>();
@@ -205,14 +208,19 @@ public static class LiveEndpoints
         }).RequireAuthorization(Policies.Command);
 
         // The incident's devices with when each was last heard: is the crew's link alive?
-        api.MapGet("/{id:guid}/devices", async (Guid id, LookoutDb db, DeviceActivity activity, CancellationToken ct) =>
-            (await db.Devices.AsNoTracking().Where(d => d.IncidentId == id).OrderBy(d => d.CrewId).ThenBy(d => d.DeviceId).ToListAsync(ct))
-                .Select(d =>
-                {
-                    var heard = activity.Get(d.DeviceId);
-                    return new { d.DeviceId, d.CrewId, d.AssignedAt, d.AssignedBy, LastHeard = heard?.LastHeard, heard?.BatteryPercent };
-                }))
-            .RequireAuthorization(Policies.Read);
+        api.MapGet("/{id:guid}/devices", async (Guid id, LookoutDb db, DeviceActivity activity, HttpContext http, CancellationToken ct) =>
+        {
+            // A crew sees only its own devices; who assigned them is for the incident commander.
+            var actor = Actor.From(http.User);
+            var q = db.Devices.AsNoTracking().Where(d => d.IncidentId == id);
+            if (actor.Role == Roles.Crew) q = q.Where(d => d.CrewId == actor.CrewId);
+            var ic = actor.Role == Roles.IncidentCommander;
+            return (await q.OrderBy(d => d.CrewId).ThenBy(d => d.DeviceId).ToListAsync(ct)).Select(d =>
+            {
+                var heard = activity.Get(d.DeviceId);
+                return new { d.DeviceId, d.CrewId, d.AssignedAt, AssignedBy = ic ? d.AssignedBy : null, LastHeard = heard?.LastHeard, heard?.BatteryPercent };
+            });
+        }).RequireAuthorization(Policies.Read);
 
         api.MapDelete("/{id:guid}/crews/{crewId}/devices/{deviceId}", async (Guid id, string crewId, string deviceId, LookoutDb db,
             IncidentSignals signals, TimeProvider clock, HttpContext http, CancellationToken ct) =>

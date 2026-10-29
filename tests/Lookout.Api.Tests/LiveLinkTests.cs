@@ -26,6 +26,19 @@ public sealed class LiveLinkFixture : LookoutAppFixture
 
     protected override async ValueTask StartDependenciesAsync() => await _broker.StartAsync();
 
+    /// <summary>Uplinks are not retained, so tests must not publish before the API has subscribed.</summary>
+    protected override async ValueTask AfterStartAsync()
+    {
+        var client = App.CreateClient();
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while ((await client.GetAsync("/api/health/ready")).StatusCode != HttpStatusCode.OK)
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException("The live API did not become ready (database, loop, broker, devices).");
+            await Task.Delay(250);
+        }
+        await Task.Delay(500); // connected is reported before the subscription is acknowledged
+    }
+
     protected override void Configure(IWebHostBuilder b)
     {
         b.UseSetting("Lookout:Live:Enabled", "true");
@@ -46,7 +59,9 @@ public sealed class LiveCollection : ICollectionFixture<LiveLinkFixture>;
 
 /// <summary>
 /// End to end through the broker: the device registry decides whose reports count and where alerts go.
-/// The incident runs at 60x, so a scenario minute passes every real second.
+/// The incident runs at 30x: a scenario minute every 2 real seconds, so COMMS LOST (minute 15) comes
+/// after about 30 s, the wind-shift CRITICAL (minute 20) about 10 s later, and the incident closes
+/// after about 100 s, well after the test is done.
 /// </summary>
 [Collection("live")]
 public sealed class LiveLinkTests(LiveLinkFixture fx)
@@ -56,7 +71,7 @@ public sealed class LiveLinkTests(LiveLinkFixture fx)
     {
         var ct = TestContext.Current.CancellationToken;
         var ic = fx.Client("ic");
-        var created = await ic.PostAsJsonAsync("/api/incidents", new { scenarioId = "pine-valley-wind-shift", clockRate = 60 }, ct);
+        var created = await ic.PostAsJsonAsync("/api/incidents", new { scenarioId = "pine-valley-wind-shift", clockRate = 30 }, ct);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var incident = (await created.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("id").GetGuid();
         var suffix = incident.ToString("N")[^8..];
@@ -83,13 +98,22 @@ public sealed class LiveLinkTests(LiveLinkFixture fx)
         Assert.Contains(fx.App.Services.GetRequiredService<DeviceActivity>().HeardWithin(TimeSpan.FromMinutes(1)), d => d.DeviceId == strayDevice);
 
         // With no further fixes Alpha goes COMMS LOST, a warning that needs an acknowledgement. It must
-        // reach Alpha's device, and nothing may go to the stray.
-        var deadline = DateTime.UtcNow.AddSeconds(45);
+        // reach Alpha's device, and nothing may go to the stray. Acknowledge the alert that is open now,
+        // by its link sequence, once its downlink has arrived: an earlier one may already be superseded.
+        var deadline = DateTime.UtcNow.AddSeconds(60);
         AlertMessage? warning = null;
         while (warning is null && DateTime.UtcNow < deadline)
         {
-            warning = downlinks.Where(d => d.Topic == Topics.DeviceDownlink(alphaDevice) && d.Alert.Level >= 2).Select(d => d.Alert).FirstOrDefault();
-            await Task.Delay(200, ct);
+            await using (var scope = fx.App.Services.CreateAsyncScope())
+            {
+                var open = await scope.ServiceProvider.GetRequiredService<LookoutDb>().Alerts.AsNoTracking()
+                    .Where(a => a.IncidentId == incident && a.CrewId == "ALPHA" && a.RequiresAck && a.State == Engine.Workflow.AlertState.Sent)
+                    .OrderByDescending(a => a.LinkSeq).FirstOrDefaultAsync(ct);
+                if (open is not null)
+                    warning = downlinks.Where(d => d.Topic == Topics.DeviceDownlink(alphaDevice) && d.Alert.Sequence == (ushort)open.LinkSeq)
+                        .Select(d => d.Alert).FirstOrDefault();
+            }
+            if (warning is null) await Task.Delay(200, ct);
         }
         Assert.NotNull(warning);
         Assert.StartsWith("ALPHA", warning.Text);
