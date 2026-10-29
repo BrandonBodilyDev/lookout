@@ -62,7 +62,7 @@ public static class LiveEndpoints
             {
                 i.Id, i.ScenarioId, i.Name, i.StartedAt, i.ClockRate, Status = i.Status.ToString().ToLowerInvariant(),
                 WindSource = i.WindSource.ToString().ToLowerInvariant(),
-                Crews = crews.Select(c => new { Id = c.CrewId, c.Name, Route = c.RouteId, c.Size, c.Pace }),
+                Crews = crews.Select(c => new { Id = c.CrewId, c.Name, Route = c.RouteId, Routes = new[] { c.RouteId }.Concat(c.AlternateRouteIds), c.Size, c.Pace }),
                 Routes = routes.Select(RouteDto.From),
                 SafetyZones = zones.Select(ZoneDto.From),
             });

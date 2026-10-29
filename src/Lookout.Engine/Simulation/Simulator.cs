@@ -21,8 +21,10 @@ public static class Simulator
     {
         observedFront ??= scenario.Fire.FrontAt;
         var grid = scenario.Terrain is { } terrain ? new SpreadGrid(terrain) : null;
-        var profiles = scenario.Crews.ToDictionary(
-            c => c.Id, c => new RouteProfile(scenario.Route(c.RouteId), c.Pace));
+        var options = scenario.Crews.ToDictionary(c => c.Id, c => c.AllRouteIds
+            .Select(id => scenario.Route(id))
+            .Select(r => new RouteOption(new RouteProfile(r, c.Pace), scenario.SafetyZone(r.SafetyZoneId)))
+            .ToList());
 
         var frames = new List<Frame>();
         var alerts = new List<AlertEvent>();
@@ -40,19 +42,18 @@ public static class Simulator
 
             foreach (var crew in scenario.Crews)
             {
-                var profile = profiles[crew.Id];
-                var zone = scenario.SafetyZone(profile.Route.SafetyZoneId);
                 var fix = crew.LastFixAt(t);
                 var known = fix?.Position ?? crew.TruePositionAt(0);
 
-                var a = monitors[crew.Id].Assess(profile, zone, known, fix?.T, front, wind, t, ClockOf);
+                var a = monitors[crew.Id].Assess(options[crew.Id], known, fix?.T, front, wind, t, ClockOf);
                 var truth = crew.TruePositionAt(t);
                 crewStates.Add(new CrewState(
                     crew.Id, truth, known, fix?.T, a.EnRoute, a.Cutoff, a.Findings, a.RawLevel,
-                    BurnedOver: !truthFront.IsEmpty && truthFront.Contains(truthFront.Factory.CreatePoint(truth))));
+                    BurnedOver: !truthFront.IsEmpty && truthFront.Contains(truthFront.Factory.CreatePoint(truth)),
+                    a.RouteId, a.Routes));
 
                 if (a.Change is { } c)
-                    alerts.Add(new AlertEvent(t, scenario.Start.AddMinutes(t), crew.Id, profile.Route.Id, c.From, c.To, c.Text, c.Bytes));
+                    alerts.Add(new AlertEvent(t, scenario.Start.AddMinutes(t), crew.Id, a.RouteId, c.From, c.To, c.Text, c.Bytes));
             }
 
             frames.Add(new Frame(t, front, wind, crewStates));
@@ -88,9 +89,12 @@ public sealed record Frame(double T, Geometry Front, SpreadConditions Wind, IRea
 /// <param name="TruePosition">Where the crew really is (scenario truth).</param>
 /// <param name="KnownPosition">Where the engine thinks the crew is (latest fix).</param>
 /// <param name="EnRoute">The crew's fixes show it moving along its escape route.</param>
+/// <param name="RouteId">The escape route the assessment is based on (the best one at this moment).</param>
+/// <param name="Routes">Margin on every one of the crew's routes.</param>
 public sealed record CrewState(
     string CrewId, Coordinate TruePosition, Coordinate KnownPosition, double? LastFixMin, bool EnRoute,
-    CutoffResult Cutoff, IReadOnlyList<Finding> Findings, AlertLevel Level, bool BurnedOver);
+    CutoffResult Cutoff, IReadOnlyList<Finding> Findings, AlertLevel Level, bool BurnedOver,
+    string RouteId, IReadOnlyList<RouteMargin> Routes);
 
 /// <param name="Bytes">UTF-8 size of the text; Phase 1 caps crew-bound messages at 270 bytes.</param>
 public sealed record AlertEvent(

@@ -65,6 +65,15 @@ routes:
       - [-113.616609, 37.363593, 1614.5]
       - [-113.614914, 37.365839, 1655.1]
       - [-113.613784, 37.367186, 1660.1]
+  - id: ER-1B
+    name: Alpha alternate, west to the wash   # no elevations given, so they come from the terrain grid
+    safety_zone: SZ-2
+    vertices:
+      - [-113.620000, 37.359102]
+      - [-113.624521, 37.359641]
+      - [-113.627346, 37.362695]
+      - [-113.629041, 37.367186]
+      - [-113.628928, 37.372397]
   - id: ER-2
     name: Bravo wash (downhill)
     safety_zone: SZ-2
@@ -78,7 +87,7 @@ routes:
 crews:
   - id: ALPHA
     name: Crew Alpha (Type 2 IA)
-    route: ER-1
+    routes: [ER-1, ER-1B]          # primary first; Lookout works from whichever still clears
     pace: moderate
     size: 20
     fix_interval_s: 60

@@ -34,6 +34,26 @@ public class DemoScenarioTests
     }
 
     [Fact]
+    public void Alpha_is_told_which_route_to_take_and_which_to_avoid()
+    {
+        var first = Result.Value.Alerts.First(a => a.CrewId == "ALPHA" && a.To == AlertLevel.Critical);
+        Assert.Equal("ER-1", first.RouteId);
+        Assert.Contains("Avoid ER-1B", first.Text);
+        // Truth agrees: the fire reaches the alternate before the primary.
+        var cut = Result.Value.Routes.ToDictionary(r => r.RouteId, r => r.TruthCutMin);
+        Assert.True(cut["ER-1B"] < cut["ER-1"]);
+    }
+
+    [Fact]
+    public void Route_points_without_elevation_take_it_from_the_terrain()
+    {
+        var scenario = ScenarioLoader.LoadFile(Path.Combine(RepoRoot(), "scenarios", "pine-valley-wind-shift.yaml"));
+        var alt = scenario.Route("ER-1B");
+        Assert.All(alt.Vertices, v => Assert.InRange(v.Z, 1400, 2100));
+        Assert.Equal(["ER-1", "ER-1B"], scenario.Crews.Single(c => c.Id == "ALPHA").AllRouteIds);
+    }
+
+    [Fact]
     public void Alpha_reaches_the_safety_zone_without_burnover()
     {
         var alpha = Result.Value.Crews.Single(c => c.CrewId == "ALPHA");

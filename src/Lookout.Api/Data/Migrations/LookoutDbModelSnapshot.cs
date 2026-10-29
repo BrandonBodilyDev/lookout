@@ -187,6 +187,10 @@ namespace Lookout.Api.Data.Migrations
                     b.Property<string>("CrewId")
                         .HasColumnType("text");
 
+                    b.PrimitiveCollection<string[]>("AlternateRouteIds")
+                        .IsRequired()
+                        .HasColumnType("text[]");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");

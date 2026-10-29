@@ -35,13 +35,14 @@ $ dotnet run --project src/Lookout.Sim
 Alert log
   14:07:00  BRAVO  None     -> Watch      49 B  BRAVO WATCH: Comms stale: last position 5 min old
   14:17:00  BRAVO  Watch    -> Warning    71 B  BRAVO WARNING: COMMS LOST: no position for 15 min, IC check in by radio
-  14:20:00  ALPHA  None     -> Critical   77 B  ALPHA CRITICAL: LEAVE NOW via ER-1 to SZ-1. Fire at route 14:28, margin 8 min
+  14:20:00  ALPHA  None     -> Critical  105 B  ALPHA CRITICAL: LEAVE NOW via ER-1 to SZ-1. Fire at route 14:28, margin 8 min. Avoid ER-1B (2 min margin)
   14:21:00  BRAVO  Warning  -> None       23 B  BRAVO no active alerts.
-  14:30:00  ALPHA  Critical -> Watch      67 B  ALPHA WATCH: En route via ER-1 to SZ-1, arrive 14:35, margin 35 min
+  14:30:00  ALPHA  Critical -> Watch      86 B  ALPHA WATCH: En route via ER-1 to SZ-1, arrive 14:35, margin 35 min. Avoid ER-1B (cut)
   14:34:00  ALPHA  Watch    -> None       23 B  ALPHA no active alerts.
 
 Truth scorecard
   ER-1: fire reaches route at 14:28
+  ER-1B: fire reaches route at 14:26
   ALPHA: reached safety zone 14:34, burnover never, first cut-off warning 8.0 min before the cut
 ```
 
@@ -158,6 +159,8 @@ Spread doubles for every 10 degrees of upslope along an edge, capped at 30 degre
 
 **Crew arrival.** Each route is resampled every 20 m with real ground elevation. Walking speed comes from Sullivan et al. (2020), a travel-rate model fitted to GPS tracks of eleven hotshot crews carrying gear on trails. On the moderate setting it gives 1.38 m/s on flat ground, 0.90 m/s at +15°, and 0.55 m/s at +30°.
 
+**Several escape routes.** A crew can have more than one route, as the IRPG expects. Lookout evaluates every route each update and works from the one with the largest margin. It names any alternative that would not leave the buffer, so the crew does not take it under pressure. In the demo, Alpha's alternate ER-1B runs west toward the fire's new path: "Avoid ER-1B (2 min margin)" at 14:20, and the fire does reach ER-1B first.
+
 **Hysteresis.** Escalations go out at once. A downgrade goes out only after the lower level has held for 2 minutes, so a margin sitting on a threshold cannot flap over the link.
 
 **Wind is not forecast.** The engine uses the wind observed now and holds it constant. That is why the demo's warning arrives at the moment of the shift and not before.
@@ -267,7 +270,7 @@ MQTT_USER=field MQTT_PASSWORD=lookout-dev-field CLOCK_RATE=8 dotnet run --projec
 npm --prefix web install && npm --prefix web run dev
 ```
 
-For traces and metrics in the Aspire dashboard at http://localhost:18888:
+For traces and metrics in the Aspire dashboard at http://localhost:18888 (engine tick duration, alerts raised and escalated, acknowledgement latency, link bytes up and down, plus HTTP, database and runtime instrumentation):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build

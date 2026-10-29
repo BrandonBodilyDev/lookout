@@ -40,7 +40,8 @@ public sealed class IncidentRuntime
     public string WindSource { get; private set; } = "scenario default";
     public Dictionary<string, (double ScenarioMin, Coordinate Position, int Battery)> Fixes { get; } = new();
     public Dictionary<string, CrewMonitor> Monitors { get; } = new();
-    public Dictionary<string, RouteProfile> Profiles { get; } = new();
+    /// <summary>Each crew's escape routes with their safety zones, primary first.</summary>
+    public Dictionary<string, List<RouteOption>> Routes { get; } = new();
     public Dictionary<string, SafetyZone> Zones { get; } = new();
     public List<CrewRecord> Crews { get; } = [];
     public Dictionary<string, CrewAssessment> LastAssessment { get; } = new();
@@ -65,13 +66,20 @@ public sealed class IncidentRuntime
                 Local.CreatePolygon(z.Area.ExteriorRing.Coordinates.Select(c => Frame.ToLocal(c.X, c.Y)).ToArray()));
 
         var routeById = routes.ToDictionary(r => r.RouteId);
-        Profiles.Clear();
+        Routes.Clear();
         foreach (var crew in Crews)
         {
-            if (!routeById.TryGetValue(crew.RouteId, out var r)) continue;
-            var route = new EscapeRoute(r.RouteId, r.Name, r.SafetyZoneId,
-                r.Path.Coordinates.Select(c => { var l = Frame.ToLocal(c.X, c.Y); return new CoordinateZ(l.X, l.Y, double.IsNaN(c.Z) ? 0 : c.Z); }).ToList());
-            Profiles[crew.CrewId] = new RouteProfile(route, Enum.Parse<Engine.Travel.PaceProfile>(crew.Pace, ignoreCase: true));
+            var pace = Enum.Parse<Engine.Travel.PaceProfile>(crew.Pace, ignoreCase: true);
+            var options = new List<RouteOption>();
+            foreach (var id in new[] { crew.RouteId }.Concat(crew.AlternateRouteIds))
+            {
+                if (!routeById.TryGetValue(id, out var r) || !Zones.TryGetValue(r.SafetyZoneId, out var zone)) continue;
+                var route = new EscapeRoute(r.RouteId, r.Name, r.SafetyZoneId,
+                    r.Path.Coordinates.Select(c => { var l = Frame.ToLocal(c.X, c.Y); return new CoordinateZ(l.X, l.Y, double.IsNaN(c.Z) ? 0 : c.Z); }).ToList());
+                options.Add(new RouteOption(new RouteProfile(route, pace), zone));
+            }
+            if (options.Count == 0) continue;
+            Routes[crew.CrewId] = options;
             if (!Monitors.ContainsKey(crew.CrewId))
                 Monitors[crew.CrewId] = new CrewMonitor(crew.CrewId, Scenario.Alerts, Grid);
         }

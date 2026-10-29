@@ -54,7 +54,7 @@ export function CrewCard({ crew, meta }: { crew: CrewView; meta: { name: string;
         <div>
           <div className="crew-name">{meta.name}</div>
           <div className="muted">
-            {meta.route} · {meta.size} people · {meta.pace} pace
+            {crew.routeId ?? meta.route} · {meta.size} people · {meta.pace} pace
             {crew.battery != null && ` · battery ${crew.battery}%`}
           </div>
         </div>
@@ -70,6 +70,15 @@ export function CrewCard({ crew, meta }: { crew: CrewView; meta: { name: string;
             <dd>{crew.fixAgeMin === null ? "none" : crew.fixAgeMin < 1 ? "now" : `${crew.fixAgeMin.toFixed(0)} min ago`}</dd>
           </div>
         </dl>
+      )}
+      {crew.routeMargins && crew.routeMargins.length > 1 && !crew.inSafetyZone && (
+        <p className="route-margins">
+          {crew.routeMargins.map((r) => (
+            <span key={r.routeId} className={r.routeId === crew.routeId ? "best" : r.marginMin !== null && r.marginMin < 0 ? "cut" : ""}>
+              {r.routeId} {r.marginMin === null ? "safe" : r.marginMin < 0 ? "cut" : `${Math.round(r.marginMin)} min`}
+            </span>
+          ))}
+        </p>
       )}
       {crew.findings.length > 0 && (
         <ul className="findings">

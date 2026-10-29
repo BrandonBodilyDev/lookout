@@ -30,7 +30,7 @@ public static class TimelineDto
                 SafetyZone = rt.SafetyZoneId,
                 Path = rt.Vertices.Select(v => { var (lon, lat) = f.ToLonLat(v); return new[] { R6(lon), R6(lat), Math.Round(v.Z, 1) }; }),
             }),
-            Crews = s.Crews.Select(c => new { c.Id, c.Name, Route = c.RouteId, c.Size, Pace = c.Pace.ToString().ToLowerInvariant() }),
+            Crews = s.Crews.Select(c => new { c.Id, c.Name, Route = c.RouteId, Routes = c.AllRouteIds, c.Size, Pace = c.Pace.ToString().ToLowerInvariant() }),
             Frames = r.Frames.Select(fr => new
             {
                 fr.T,
@@ -40,6 +40,8 @@ public static class TimelineDto
                 Crews = fr.Crews.Select(c => new
                 {
                     Id = c.CrewId,
+                    c.RouteId,
+                    RouteMargins = c.Routes.Select(r => new { r.RouteId, MarginMin = Finite(r.MarginMin) }),
                     Truth = Point(f, c.TruePosition),
                     Known = Point(f, c.KnownPosition),
                     FixAgeMin = c.LastFixMin is { } lf ? fr.T - lf : (double?)null,

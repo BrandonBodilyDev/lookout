@@ -55,7 +55,11 @@ public sealed class Crew
 {
     public required string Id { get; init; }
     public required string Name { get; init; }
+    /// <summary>Primary escape route.</summary>
     public required string RouteId { get; init; }
+    /// <summary>Other escape routes, in order of preference. The IRPG expects more than one.</summary>
+    public IReadOnlyList<string> AlternateRouteIds { get; init; } = [];
+    public IEnumerable<string> AllRouteIds => [RouteId, .. AlternateRouteIds];
     public required PaceProfile Pace { get; init; }
     public required int Size { get; init; }
     /// <summary>Where the crew actually is (scenario truth), as time-stamped keyframes.</summary>

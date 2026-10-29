@@ -106,6 +106,7 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
         alert.AcknowledgedAt = now;
         alert.AcknowledgedBy = actor.Name;
         await Save(alert, expectedVersion, ct);
+        RecordAckLatency(alert, actor.Role);
         return alert;
     }
 
@@ -132,6 +133,7 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
         alert.AcknowledgedAt = now;
         alert.AcknowledgedBy = device.Name;
         await Save(alert, alert.Version, ct);
+        RecordAckLatency(alert, "device");
         return alert;
     }
 
@@ -162,6 +164,14 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
         }
         if (overdue.Count > 0) await db.SaveChangesAsync(ct);
         return overdue;
+    }
+
+    private static void RecordAckLatency(AlertRecord a, string by)
+    {
+        if (a.SentAt is { } sent && a.AcknowledgedAt is { } acked)
+            Telemetry.AckLatency.Record((acked - sent).TotalSeconds,
+                new KeyValuePair<string, object?>("level", a.Level.ToString().ToLowerInvariant()),
+                new KeyValuePair<string, object?>("by", by));
     }
 
     private async Task<AlertRecord> Load(Guid incidentId, Guid alertId, CancellationToken ct) =>

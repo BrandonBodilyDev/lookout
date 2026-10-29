@@ -11,8 +11,12 @@ export interface Finding {
   summary: string;
 }
 
+export interface RouteMargin { routeId: string; marginMin: number | null }
+
 export interface CrewFrame {
   id: string;
+  routeId: string;
+  routeMargins: RouteMargin[];
   truth: LonLat;
   known: LonLat;
   fixAgeMin: number | null;
@@ -58,7 +62,7 @@ export interface Timeline {
   origin: LonLat;
   safetyZones: { id: string; name: string; ring: LonLat[] }[];
   routes: { id: string; name: string; safetyZone: string; path: [number, number, number][] }[];
-  crews: { id: string; name: string; route: string; size: number; pace: string }[];
+  crews: { id: string; name: string; route: string; routes: string[]; size: number; pace: string }[];
   frames: Frame[];
   alerts: AlertEvent[];
   score: {
@@ -89,6 +93,8 @@ export type Role = "ic" | "observer";
 
 export interface LiveCrew {
   id: string;
+  routeId: string;
+  routeMargins: RouteMargin[];
   known: LonLat | null;
   fixAgeMin: number | null;
   battery: number | null;
@@ -149,7 +155,7 @@ export interface IncidentSummary {
 }
 
 export interface IncidentDetail extends IncidentSummary {
-  crews: { id: string; name: string; route: string; size: number; pace: string }[];
+  crews: { id: string; name: string; route: string; routes: string[]; size: number; pace: string }[];
   routes: { id: string; name: string; safetyZone: string; path: [number, number, number][]; version: number }[];
   safetyZones: { id: string; name: string; ring: LonLat[]; version: number }[];
 }
@@ -189,4 +195,6 @@ export interface CrewView {
   fixAgeMin: number | null;
   findings: Finding[];
   battery?: number | null;
+  routeId?: string;
+  routeMargins?: RouteMargin[];
 }

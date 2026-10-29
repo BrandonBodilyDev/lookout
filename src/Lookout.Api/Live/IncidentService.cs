@@ -31,7 +31,11 @@ public sealed class IncidentService(LookoutDb db, ScenarioStore scenarios, TimeP
         db.Incidents.Add(incident);
 
         foreach (var c in s.Crews)
-            db.Crews.Add(new CrewRecord { IncidentId = incident.Id, CrewId = c.Id, Name = c.Name, RouteId = c.RouteId, Size = c.Size, Pace = c.Pace.ToString().ToLowerInvariant() });
+            db.Crews.Add(new CrewRecord
+            {
+                IncidentId = incident.Id, CrewId = c.Id, Name = c.Name, RouteId = c.RouteId,
+                AlternateRouteIds = [.. c.AlternateRouteIds], Size = c.Size, Pace = c.Pace.ToString().ToLowerInvariant(),
+            });
         foreach (var z in s.SafetyZones)
             db.SafetyZones.Add(new SafetyZoneRecord { IncidentId = incident.Id, ZoneId = z.Id, Name = z.Name, Area = ToWgs84(s.Frame, z.Area) });
         foreach (var r in s.Routes)

@@ -77,6 +77,7 @@ export function ReplayView({ header }: { header: React.ReactNode }) {
     fire: frame.fire,
     crews: frame.crews.map((c) => ({
       id: c.id,
+      routeId: c.routeId,
       known: c.known,
       truth: c.truth,
       level: c.level,

@@ -260,3 +260,8 @@ details.card[open] summary { margin-bottom: 8px; }
 .key-cut { width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--critical); }
 .key-crew { width: 12px; height: 12px; border-radius: 50%; background: var(--critical); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--border); }
 @media (max-width: 860px) { .legend { bottom: 30px; max-width: 200px; } .legend:not([open]) { padding: 4px 8px; } }
+
+.route-margins { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; font-size: 12px; }
+.route-margins span { padding: 2px 6px; border-radius: 4px; background: var(--border); font-variant-numeric: tabular-nums; }
+.route-margins .best { background: color-mix(in srgb, var(--none) 25%, transparent); font-weight: 700; }
+.route-margins .cut { background: var(--critical); color: #fff; }

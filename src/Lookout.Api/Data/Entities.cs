@@ -31,7 +31,10 @@ public sealed class CrewRecord
     public Guid IncidentId { get; set; }
     public required string CrewId { get; set; }
     public required string Name { get; set; }
+    /// <summary>Primary escape route.</summary>
     public required string RouteId { get; set; }
+    /// <summary>Other escape routes, in order of preference.</summary>
+    public string[] AlternateRouteIds { get; set; } = [];
     public int Size { get; set; }
     public required string Pace { get; set; }
 }

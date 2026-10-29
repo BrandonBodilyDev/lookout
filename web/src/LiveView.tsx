@@ -222,7 +222,7 @@ function Incident(props: { id: string; token: string; role: Role; header: React.
   const state: MapState = useMemo(() => ({
     fire: frame?.fire ?? [],
     crews: (frame?.crews ?? []).map((c) => ({
-      id: c.id, known: c.known, level: c.level, enRoute: c.enRoute, stale: (c.fixAgeMin ?? 0) >= 5,
+      id: c.id, routeId: c.routeId, known: c.known, level: c.level, enRoute: c.enRoute, stale: (c.fixAgeMin ?? 0) >= 5,
       cut: c.cut, fireAtCut: c.fireAtCut, leaveNowZone: c.leaveNowZone,
     })),
   }), [frame]);

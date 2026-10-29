@@ -42,9 +42,19 @@ public static class ScenarioLoader
             return new SafetyZone(z.Id, z.Name, gf.CreatePolygon(ring.ToArray()));
         }).ToList();
 
+        var terrain = f.Terrain is { } tf && baseDir is not null
+            ? TerrainGrid.ReadAscii(Path.Combine(baseDir, tf.File))
+            : null;
+
+        // A vertex may omit its elevation; then it comes from the terrain grid (or 0 on flat scenarios).
         var routes = f.Routes.Select(r => new EscapeRoute(
             r.Id, r.Name, r.SafetyZone,
-            r.Vertices.Select(v => { var c = Local(v); return new CoordinateZ(c.X, c.Y, v[2]); }).ToList()))
+            r.Vertices.Select(v =>
+            {
+                var c = Local(v);
+                var z = v.Count >= 3 ? v[2] : terrain?.Elevation(c.X, c.Y) ?? 0;
+                return new CoordinateZ(c.X, c.Y, Math.Round(z, 1));
+            }).ToList()))
             .ToList();
 
         foreach (var r in routes)
@@ -55,20 +65,19 @@ public static class ScenarioLoader
                 throw new InvalidDataException($"Route {r.Id} must end inside safety zone {zone.Id}.");
         }
 
-        var terrain = f.Terrain is { } tf && baseDir is not null
-            ? TerrainGrid.ReadAscii(Path.Combine(baseDir, tf.File))
-            : null;
-
         var crews = f.Crews.Select(c =>
         {
-            if (routes.All(r => r.Id != c.Route))
-                throw new InvalidDataException($"Crew {c.Id} names unknown route {c.Route}.");
+            var routeIds = c.Routes.Count > 0 ? c.Routes : [c.Route];
+            foreach (var id in routeIds)
+                if (routes.All(r => r.Id != id))
+                    throw new InvalidDataException($"Crew {c.Id} names unknown route {id}.");
             var track = c.Track.Select(k => (k[0], frame.ToLocal(k[1], k[2]))).OrderBy(k => k.Item1).ToList();
             return new Crew
             {
                 Id = c.Id,
                 Name = c.Name,
-                RouteId = c.Route,
+                RouteId = routeIds[0],
+                AlternateRouteIds = routeIds.Skip(1).ToList(),
                 Pace = Enum.Parse<PaceProfile>(c.Pace, ignoreCase: true),
                 Size = c.Size,
                 Track = track,
@@ -175,7 +184,10 @@ public static class ScenarioLoader
     {
         public string Id { get; set; } = "";
         public string Name { get; set; } = "";
+        /// <summary>A single escape route...</summary>
         public string Route { get; set; } = "";
+        /// <summary>...or several, primary first.</summary>
+        public List<string> Routes { get; set; } = [];
         public string Pace { get; set; } = "moderate";
         public int Size { get; set; } = 20;
         public double FixIntervalS { get; set; } = 60;

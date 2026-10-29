@@ -28,6 +28,8 @@ public static class LiveFrame
                 return new
                 {
                     Id = c.CrewId,
+                    RouteId = a?.RouteId ?? c.RouteId,
+                    RouteMargins = (a?.Routes ?? []).Select(r => new { r.RouteId, MarginMin = GeoDto.Finite(r.MarginMin) }),
                     Known = hasFix ? GeoDto.Point(f, fix.Position) : null,
                     FixAgeMin = hasFix ? Math.Round(t - fix.ScenarioMin, 1) : (double?)null,
                     Battery = hasFix && fix.Battery >= 0 ? fix.Battery : (int?)null,

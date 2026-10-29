@@ -216,7 +216,9 @@ public sealed class LiveRunner(
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
 
-        switch (WireFormat.DecodeUplink(payload))
+        var uplink = WireFormat.DecodeUplink(payload);
+        Telemetry.UplinkMessages.Add(1, new KeyValuePair<string, object?>("kind", uplink is PositionReport ? "position" : "ack"));
+        switch (uplink)
         {
             case PositionReport p:
                 // Trust the device clock only up to the server's: one fix stamped in the future would
@@ -252,6 +254,21 @@ public sealed class LiveRunner(
 
     private async Task TickAsync(IncidentRuntime rt, CancellationToken ct)
     {
+        using var activity = Telemetry.Source.StartActivity("engine.tick");
+        activity?.SetTag("lookout.incident", rt.Incident.Id.ToString());
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            await TickCoreAsync(rt, ct);
+        }
+        finally
+        {
+            Telemetry.TickDuration.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        }
+    }
+
+    private async Task TickCoreAsync(IncidentRuntime rt, CancellationToken ct)
+    {
         var now = clock.GetUtcNow();
         var t = rt.ScenarioMinute(now);
         if (t > rt.Scenario.DurationMin + options.CloseAfterMin)
@@ -267,13 +284,13 @@ public sealed class LiveRunner(
 
         foreach (var crew in rt.Crews)
         {
-            if (!rt.Profiles.TryGetValue(crew.CrewId, out var profile) || !rt.Zones.TryGetValue(profile.Route.SafetyZoneId, out var zone)) continue;
+            if (!rt.Routes.TryGetValue(crew.CrewId, out var options)) continue;
             var hasFix = rt.Fixes.TryGetValue(crew.CrewId, out var fix);
             // Give devices a few minutes to report in before treating silence as a comms problem.
             if (!hasFix && t < rt.Scenario.Alerts.CommsStaleMin) continue;
-            var known = hasFix ? fix.Position : profile.Samples[0].Point;
+            var known = hasFix ? fix.Position : options[0].Profile.Samples[0].Point;
 
-            var a = rt.Monitors[crew.CrewId].Assess(profile, zone, known, hasFix ? fix.ScenarioMin : null, rt.Front, rt.Wind, t, rt.ClockLabel);
+            var a = rt.Monitors[crew.CrewId].Assess(options, known, hasFix ? fix.ScenarioMin : null, rt.Front, rt.Wind, t, rt.ClockLabel);
             rt.LastAssessment[crew.CrewId] = a;
             if (a.Change is not { } change) continue;
 
@@ -289,6 +306,7 @@ public sealed class LiveRunner(
                 log.LogError(e, "Could not raise {Level} for crew {Crew}; will retry next tick", change.To, crew.CrewId);
                 continue;
             }
+            Telemetry.AlertsRaised.Add(1, new KeyValuePair<string, object?>("level", change.To.ToString().ToLowerInvariant()));
             Offer(rt, raised.Alert, a.Cutoff.LeaveByMin);
             foreach (var old in raised.Superseded) await group.SendAsync("alert", AlertDto.From(old), ct);
             await group.SendAsync("alert", AlertDto.From(raised.Alert), ct);
@@ -296,15 +314,20 @@ public sealed class LiveRunner(
 
         var timeout = TimeSpan.FromMinutes(options.AckTimeoutMin / rt.Incident.ClockRate);
         foreach (var escalated in await alerts.EscalateOverdueAsync(rt.Incident.Id, timeout, ct))
+        {
+            Telemetry.AlertsEscalated.Add(1);
             await group.SendAsync("alert", AlertDto.From(escalated), ct);
+        }
 
         foreach (var tx in rt.Governor.Due(t * 60))
         {
             if (_mqtt is not null && !await _mqtt.TryPublishAsync(Topics.Downlink(rt.Incident.Id, tx.CrewId), tx.Payload, ct))
             {
                 rt.Governor.Failed(tx); // broker unreachable: due again next tick
+                Telemetry.DownlinkFailures.Add(1);
                 continue;
             }
+            Telemetry.DownlinkBytes.Add(tx.Payload.Length);
             rt.Governor.Delivered(tx);
             try
             {

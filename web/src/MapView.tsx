@@ -35,6 +35,8 @@ export interface MapLayout {
 
 export interface MapCrew {
   id: string;
+  /** The route the engine is working from right now; it takes the crew's alert colour. */
+  routeId?: string;
   known: LonLat | null;
   /** Replay only: where the crew really is, drawn as a ring while its last fix is stale. */
   truth?: LonLat | null;
@@ -63,7 +65,7 @@ const fc = (features: GeoJSON.Feature[]): FC => ({ type: "FeatureCollection", fe
 function layoutData(layout: MapLayout, state: MapState) {
   const levelByRoute = new Map<string, Level>();
   for (const c of state.crews) {
-    const route = layout.crewRoutes[c.id];
+    const route = c.routeId ?? layout.crewRoutes[c.id];
     if (route) levelByRoute.set(route, c.level);
   }
   return {
