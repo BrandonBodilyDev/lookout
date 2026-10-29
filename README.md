@@ -280,6 +280,12 @@ For traces and metrics in the Aspire dashboard at http://localhost:18888 (engine
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
 ```
 
+To measure how many crews one incident can evaluate per second:
+
+```bash
+dotnet run -c Release --project src/Lookout.Sim -- bench
+```
+
 The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add `?t=20` to a replay URL to open it at minute 20. On the field simulator, set `NO_ACK_CREWS=BRAVO` to watch an alert escalate, or `DRONE_MODE=camera` to feed the engine detected fronts instead of the true fire.
 
 ## Project layout

@@ -38,22 +38,29 @@ public static class GridCutoffRule
         // Margin from the current front: the smallest label among burned cells.
         var margin = double.PositiveInfinity;
         var best = -1;
-        foreach (var cell in FrontCells(terrain, front))
+        foreach (var cell in FrontCells(terrain, front).Value)
         {
             if (reverse.Margin[cell] < margin) { margin = reverse.Margin[cell]; best = cell; }
         }
 
         var cutIdx = best >= 0 ? reverse.Source[best] : route.Count - 1;
         var (cut, crewAtCut) = route[cutIdx];
-        var triggerZone = RasterPolygonizer.Polygonize(
-            terrain, c => reverse.Margin[c] <= settings.BufferMin, simplifyTolerance: terrain.CellSize * 0.5);
+        var buffer = settings.BufferMin;
+        var triggerZone = new Lazy<Geometry?>(() => RasterPolygonizer.Polygonize(
+            terrain, c => reverse.Margin[c] <= buffer, simplifyTolerance: terrain.CellSize * 0.5));
 
         return CutoffRule.Result(zone, settings, nowMin, margin, cut, margin + crewAtCut, crewAtCut,
             route[^1].CrewMin, triggerZone);
     }
 
+    // The front is the same for every crew and route in a tick; rasterize it once per geometry.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Geometry, Lazy<int[]>> FrontCache = new();
+
     /// <summary>Cells whose centres lie inside the reported front (at least the cell under its centroid).</summary>
-    private static IEnumerable<int> FrontCells(Terrain.TerrainGrid terrain, Geometry front)
+    private static Lazy<int[]> FrontCells(Terrain.TerrainGrid terrain, Geometry front) =>
+        FrontCache.GetValue(front, f => new Lazy<int[]>(() => RasterizeFront(terrain, f).ToArray()));
+
+    private static IEnumerable<int> RasterizeFront(Terrain.TerrainGrid terrain, Geometry front)
     {
         if (front.IsEmpty) yield break;
         var prepared = PreparedGeometryFactory.Prepare(front);

@@ -79,7 +79,7 @@ public static class CutoffRule
 
     internal static CutoffResult Result(
         SafetyZone zone, AlertSettings settings, double nowMin, double margin, Coordinate cut,
-        double fireAtCut, double crewAtCut, double crewTravel, Geometry? triggerZone)
+        double fireAtCut, double crewAtCut, double crewTravel, Lazy<Geometry?>? triggerZone)
     {
         var slack = margin - settings.BufferMin;
         return new CutoffResult(
@@ -93,7 +93,7 @@ public static class CutoffRule
             CrewTravelMin: crewTravel,
             CrewMinToCut: crewAtCut,
             Level: LevelFor(slack, settings),
-            TriggerZone: triggerZone);
+            LazyTriggerZone: triggerZone);
     }
 
     /// <summary>
@@ -127,8 +127,11 @@ public static class CutoffRule
 public sealed record CutoffResult(
     bool InSafetyZone, string SafetyZoneId, double MarginMin, double SlackMin, double LeaveByMin,
     Coordinate? CutPoint, double FireEtaAtCutMin, double CrewTravelMin, double CrewMinToCut, AlertLevel Level,
-    Geometry? TriggerZone = null)
+    Lazy<Geometry?>? LazyTriggerZone = null)
 {
+    /// <summary>Built only when read: most evaluated routes' zones are never drawn.</summary>
+    public Geometry? TriggerZone => LazyTriggerZone?.Value;
+
     public static CutoffResult Safe(string zoneId) =>
         new(true, zoneId, double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity,
             null, double.PositiveInfinity, 0, 0, AlertLevel.None);

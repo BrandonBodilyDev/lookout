@@ -9,6 +9,12 @@ using Lookout.Sim;
 //   Build terrain:    dotnet run --project src/Lookout.Sim -- dem <scenario.yaml> <out.asc> <west> <east> <south> <north> [cell]
 //                     (extent in metres in the scenario's local frame, east and north of its origin)
 //   Drone survey:     dotnet run --project src/Lookout.Sim -- drone (track | survey | flight) ...
+if (args.Length > 0 && args[0] == "bench")
+{
+    Bench.Run(ScenarioLoader.LoadFile(args.Length > 1 ? args[1] : Path.Combine("scenarios", "pine-valley-wind-shift.yaml")), [1, 10, 25, 50, 100]);
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "vapid")
 {
     // Web Push identity for the API: Lookout__WebPush__PublicKey / Lookout__WebPush__PrivateKey.
