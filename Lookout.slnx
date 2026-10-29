@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Lookout.Api/Lookout.Api.csproj" />
+    <Project Path="src/Lookout.Drone/Lookout.Drone.csproj" />
     <Project Path="src/Lookout.Engine/Lookout.Engine.csproj" />
     <Project Path="src/Lookout.Field/Lookout.Field.csproj" />
     <Project Path="src/Lookout.Link/Lookout.Link.csproj" />

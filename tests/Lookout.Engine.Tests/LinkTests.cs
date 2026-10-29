@@ -97,9 +97,21 @@ public class LinkGovernorTests
     {
         var g = new LinkGovernor(new GovernorSettings(40, 60));
         g.Offer("A", Guid.NewGuid(), 0, Payload, requiresAck: false);
-        Assert.Single(g.Due(0));
+        g.Delivered(Assert.Single(g.Due(0)));
         Assert.False(g.HasPending("A"));
         Assert.Empty(g.Due(500));
+    }
+
+    [Fact]
+    public void A_failed_transmission_is_due_again_at_once()
+    {
+        var g = new LinkGovernor(new GovernorSettings(40, 60));
+        var id = Guid.NewGuid();
+        g.Offer("A", id, 0, Payload, requiresAck: false);
+        g.Failed(Assert.Single(g.Due(0)));       // broker down
+        var retry = Assert.Single(g.Due(1));     // no 40 s penalty: nothing actually went out
+        Assert.Equal(id, retry.AlertId);
+        Assert.False(retry.IsRepeat);
     }
 
     [Fact]

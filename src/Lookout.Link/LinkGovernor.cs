@@ -46,25 +46,42 @@ public sealed class LinkGovernor(GovernorSettings settings)
 
     public bool HasPending(string crewId) => _slots.ContainsKey(crewId);
 
-    /// <summary>Transmissions due at <paramref name="nowSec"/>, most severe first. Marks them sent.</summary>
+    /// <summary>
+    /// Transmissions due at <paramref name="nowSec"/>, most severe first. The caller reports each one
+    /// back with <see cref="Delivered"/> or <see cref="Failed"/>.
+    /// </summary>
     public IReadOnlyList<Transmission> Due(double nowSec)
     {
         var due = new List<Transmission>();
         foreach (var (crew, slot) in _slots.OrderByDescending(kv => kv.Value.Level))
         {
-            var spacingOk = !_lastTx.TryGetValue(crew, out var last) || nowSec - last >= settings.MinSpacingSec;
+            var hadTx = _lastTx.TryGetValue(crew, out var last);
+            var spacingOk = !hadTx || nowSec - last >= settings.MinSpacingSec;
             var firstSend = slot.LastSentSec is null;
             var repeatDue = slot.RequiresAck && slot.LastSentSec is { } ls && nowSec - ls >= settings.RepeatSec;
             if (!spacingOk || !(firstSend || repeatDue)) continue;
 
+            due.Add(new Transmission(crew, slot.AlertId, slot.Payload, IsRepeat: !firstSend, slot.LastSentSec, hadTx ? last : null));
             slot.LastSentSec = nowSec;
             _lastTx[crew] = nowSec;
-            due.Add(new Transmission(crew, slot.AlertId, slot.Payload, IsRepeat: !firstSend));
         }
-        // Informational messages go once; nothing to repeat.
-        foreach (var t in due.Where(t => !_slots[t.CrewId].RequiresAck)) _slots.Remove(t.CrewId);
         return due;
+    }
+
+    /// <summary>The message left on the link. Informational messages go once, so their slot is freed.</summary>
+    public void Delivered(Transmission t)
+    {
+        if (_slots.TryGetValue(t.CrewId, out var s) && s.AlertId == t.AlertId && !s.RequiresAck) _slots.Remove(t.CrewId);
+    }
+
+    /// <summary>The message could not be handed to the link (broker down): undo, so it is due again next time.</summary>
+    public void Failed(Transmission t)
+    {
+        if (_slots.TryGetValue(t.CrewId, out var s) && s.AlertId == t.AlertId) s.LastSentSec = t.PreviousSentSec;
+        if (t.PreviousTxSec is { } p) _lastTx[t.CrewId] = p; else _lastTx.Remove(t.CrewId);
     }
 }
 
-public sealed record Transmission(string CrewId, Guid AlertId, byte[] Payload, bool IsRepeat);
+/// <param name="PreviousSentSec">For rollback: when this alert was last sent before now.</param>
+/// <param name="PreviousTxSec">For rollback: when this device last transmitted before now.</param>
+public sealed record Transmission(string CrewId, Guid AlertId, byte[] Payload, bool IsRepeat, double? PreviousSentSec = null, double? PreviousTxSec = null);

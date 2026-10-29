@@ -6,15 +6,16 @@ on:
   pull_request:
 
 jobs:
-  engine:
-    name: Engine tests (.NET 10)
+  test:
+    name: Tests (.NET 10, TimescaleDB via Testcontainers)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
-      - run: dotnet test
+      - name: Engine, link and API tests
+        run: dotnet test
       - name: Demo scenario alert log
         run: dotnet run --project src/Lookout.Sim -- scenarios/pine-valley-wind-shift.yaml
 
@@ -33,3 +34,13 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run build
+
+  images:
+    name: Container images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose file
+        run: docker compose config --quiet
+      - name: Build api, field and web images
+        run: docker compose build api field web

@@ -29,6 +29,8 @@ export interface MapLayout {
   crewRoutes: Record<string, string>;
   /** Extra points to include when fitting the view, e.g. the final fire extent of a replay. */
   boundsHint?: LonLat[];
+  /** Grow the fitted view by this fraction of its size on every side (live mode cannot know the fire's extent yet). */
+  boundsPad?: number;
 }
 
 export interface MapCrew {
@@ -295,7 +297,14 @@ export function MapView({ layout, state, draw = null }: { layout: MapLayout; sta
       lo.routes.forEach((r) => r.path.forEach(([lon, lat]) => bounds.extend([lon, lat])));
       lo.zones.forEach((z) => z.ring.forEach((p) => bounds.extend(p)));
       (lo.boundsHint ?? []).forEach((p) => bounds.extend(p));
-      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60, duration: 0 });
+      if (!bounds.isEmpty()) {
+        const pad = lo.boundsPad ?? 0;
+        const sw = bounds.getSouthWest();
+        const ne = bounds.getNorthEast();
+        const dx = (ne.lng - sw.lng) * pad;
+        const dy = (ne.lat - sw.lat) * pad;
+        map.fitBounds([[sw.lng - dx, sw.lat - dy], [ne.lng + dx, ne.lat + dy]], { padding: 40, duration: 0 });
+      }
 
       ready.current = true;
     });

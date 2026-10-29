@@ -61,7 +61,8 @@ public static class LiveEndpoints
         api.MapGet("/{id:guid}/alerts", async (Guid id, bool? open, LookoutDb db, CancellationToken ct) =>
         {
             var q = db.Alerts.AsNoTracking().Where(a => a.IncidentId == id);
-            if (open == true) q = q.Where(a => a.State == AlertState.Queued || a.State == AlertState.Sent || a.State == AlertState.Escalated);
+            // Open: still needs something. Informational messages (no ack required) are done once sent.
+            if (open == true) q = q.Where(a => a.State == AlertState.Queued || a.State == AlertState.Escalated || (a.State == AlertState.Sent && a.RequiresAck));
             return (await q.OrderByDescending(a => a.RaisedAt).Take(200).ToListAsync(ct)).Select(AlertDto.From);
         }).RequireAuthorization(Policies.Read);
 

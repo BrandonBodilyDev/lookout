@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Lookout.Engine\Lookout.Engine.csproj" />
     <ProjectReference Include="..\..\src\Lookout.Link\Lookout.Link.csproj" />
+    <ProjectReference Include="..\..\src\Lookout.Drone\Lookout.Drone.csproj" />
   </ItemGroup>
 
   <ItemGroup>

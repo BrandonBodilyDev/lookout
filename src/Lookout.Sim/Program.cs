@@ -8,6 +8,10 @@ using Lookout.Sim;
 //   Run a scenario:   dotnet run --project src/Lookout.Sim -- scenarios/pine-valley-wind-shift.yaml
 //   Build terrain:    dotnet run --project src/Lookout.Sim -- dem <scenario.yaml> <out.asc> <west> <east> <south> <north> [cell]
 //                     (extent in metres in the scenario's local frame, east and north of its origin)
+//   Drone survey:     dotnet run --project src/Lookout.Sim -- drone (track | survey | flight) ...
+if (args.Length > 0 && args[0] == "drone")
+    return await DroneCommands.RunAsync(args);
+
 if (args.Length > 0 && args[0] == "dem")
 {
     double D(int i) => double.Parse(args[i], CultureInfo.InvariantCulture);
@@ -16,7 +20,7 @@ if (args.Length > 0 && args[0] == "dem")
     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(args[2]))!);
     grid.WriteAscii(args[2]);
     Console.WriteLine($"Wrote {args[2]}: elevation {grid.Z.Min():0} to {grid.Z.Max():0} m.");
-    return;
+    return 0;
 }
 
 var path = args.Length > 0 ? args[0] : Path.Combine("scenarios", "pine-valley-wind-shift.yaml");
@@ -42,5 +46,7 @@ foreach (var c in result.Crews)
     var lead = firstAlert is not null && route.TruthCutMin is { } cut ? $"{cut - firstAlert.T:0.0} min before the cut" : "n/a";
     Console.WriteLine($"  {c.CrewId}: reached safety zone {Fmt(c.ReachedSafetyZoneMin)}, burnover {Fmt(c.BurnoverMin)}, first cut-off warning {lead}");
 }
+
+return 0;
 
 string Fmt(double? m) => m is { } v ? Simulator.Clock(scenario, v) : "never";

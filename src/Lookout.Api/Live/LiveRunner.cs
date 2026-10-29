@@ -259,8 +259,12 @@ public sealed class LiveRunner(
 
         foreach (var tx in rt.Governor.Due(t * 60))
         {
-            if (_mqtt is { IsConnected: true }) await _mqtt.PublishAsync(Topics.Downlink(rt.Incident.Id, tx.CrewId), tx.Payload, ct);
-            else if (_mqtt is not null) continue; // broker down: leave it for the next tick
+            if (_mqtt is not null && !await _mqtt.TryPublishAsync(Topics.Downlink(rt.Incident.Id, tx.CrewId), tx.Payload, ct))
+            {
+                rt.Governor.Failed(tx); // broker unreachable: due again next tick
+                continue;
+            }
+            rt.Governor.Delivered(tx);
             await alerts.MarkSentAsync(tx.AlertId, ct);
             var sent = await scope.ServiceProvider.GetRequiredService<LookoutDb>().Alerts.AsNoTracking().SingleAsync(x => x.Id == tx.AlertId, ct);
             await group.SendAsync("alert", AlertDto.From(sent), ct);

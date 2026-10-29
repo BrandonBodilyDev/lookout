@@ -7,7 +7,8 @@ import type {
   AuditEntry, IncidentDetail, IncidentSummary, LiveAlert, LiveFrame, LonLat, NwsConditions, Role, ScenarioSummary,
 } from "./types";
 
-const OPEN: LiveAlert["state"][] = ["queued", "sent", "escalated"];
+/** Open = still needs something: queued, escalated, or sent and awaiting an acknowledgement. Informational messages are done once sent. */
+const isOpen = (a: LiveAlert) => a.state === "queued" || a.state === "escalated" || (a.state === "sent" && a.requiresAck);
 
 /** Live incidents: sign in, pick or start an incident, then watch and act on it as it runs. */
 export function LiveView({ header }: { header: React.ReactNode }) {
@@ -211,6 +212,7 @@ function Incident(props: { id: string; token: string; role: Role; header: React.
     routes: detail.routes,
     zones: detail.safetyZones,
     crewRoutes: Object.fromEntries(detail.crews.map((c) => [c.id, c.route])),
+    boundsPad: 0.6,
   }, [detail]);
 
   const state: MapState = useMemo(() => ({
@@ -261,7 +263,7 @@ function Incident(props: { id: string; token: string; role: Role; header: React.
     onClick: (p) => setDraw((d) => d && { ...d, points: [...d.points, p] }),
   };
   const ordered = [...alerts.values()].sort((a, b) => b.raisedAt.localeCompare(a.raisedAt));
-  const open = ordered.filter((a) => OPEN.includes(a.state));
+  const open = ordered.filter(isOpen);
 
   return (
     <div className="app">
@@ -326,7 +328,7 @@ function AlertsPanel(props: { alerts: LiveAlert[]; open: number; role: Role; onA
                 {a.cancelReason && ` · cancelled: ${a.cancelReason}`}
                 {a.state === "escalated" && " · no acknowledgement from the crew: IC action needed"}
               </div>
-              {props.role === "ic" && (a.state === "sent" || a.state === "escalated" || a.state === "queued") && (
+              {props.role === "ic" && a.requiresAck && isOpen(a) && (
                 cancelling === a.id ? (
                   <div className="button-row">
                     <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason for cancelling" aria-label="Reason" />

@@ -23,6 +23,7 @@ public sealed class MqttConnection(MqttSettings settings, string clientId, Actio
     private readonly List<string> _subscriptions = [];
     private IMqttClient? _client;
     private CancellationTokenSource? _stop;
+    private readonly string _clientId = $"{clientId}-{Guid.NewGuid().ToString("N")[..8]}";
 
     public Func<string, byte[], Task>? OnMessage { get; set; }
     public bool IsConnected => _client?.IsConnected ?? false;
@@ -56,7 +57,9 @@ public sealed class MqttConnection(MqttSettings settings, string clientId, Actio
             {
                 var options = new MqttClientOptionsBuilder()
                     .WithTcpServer(settings.Host, settings.Port)
-                    .WithClientId($"{clientId}-{Environment.ProcessId}")
+                    // Unique per connection: in containers every process is PID 1, and two clients
+                    // sharing an id make the broker drop one for the other (SessionTakenOver).
+                    .WithClientId(_clientId)
                     .WithCleanSession()
                     .WithTimeout(TimeSpan.FromSeconds(5));
                 if (settings.Username is not null) options.WithCredentials(settings.Username, settings.Password);
@@ -88,6 +91,21 @@ public sealed class MqttConnection(MqttSettings settings, string clientId, Actio
             .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
             .Build();
         await _client.PublishAsync(msg, ct);
+    }
+
+    /// <summary>Publish, or log and return false if the broker is unreachable right now.</summary>
+    public async Task<bool> TryPublishAsync(string topic, byte[] payload, CancellationToken ct = default)
+    {
+        try
+        {
+            await PublishAsync(topic, payload, ct);
+            return true;
+        }
+        catch (Exception e) when (e is InvalidOperationException or MQTTnet.Exceptions.MqttCommunicationException)
+        {
+            log?.Invoke($"MQTT publish to {topic} failed: {e.Message}");
+            return false;
+        }
     }
 
     public async ValueTask DisposeAsync()

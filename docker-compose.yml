@@ -1,16 +1,74 @@
-# One command brings up the whole Phase 0 demo:  docker compose up --build
-# Dashboard: http://localhost:8080
+# The whole system in one command:  docker compose up --build
+#   Dashboard  http://localhost:8080   (Replay works at once; Live: sign in as incident commander)
+#   The field service starts a new incident at 4x real time and plays the demo scenario into it.
+#
+# Credentials here are development-only placeholders. Change them before exposing anything.
+name: lookout
+
+x-dev-secrets: &dev-secrets
+  MQTT_PASSWORD: lookout-dev-mqtt
+
 services:
+  db:
+    image: timescale/timescaledb-ha:pg17.11-ts2.31.0
+    environment:
+      POSTGRES_DB: lookout
+      POSTGRES_USER: lookout
+      POSTGRES_PASSWORD: lookout-dev
+    volumes:
+      - pgdata:/home/postgres/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lookout -d lookout"]
+      interval: 5s
+      retries: 20
+
+  mqtt:
+    image: eclipse-mosquitto:2.1.2-alpine
+    volumes:
+      - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./deploy/mosquitto/passwd:/mosquitto/config/passwd:ro
+    ports:
+      - "1883:1883"   # so a local field simulator or MQTT client can join
+
   api:
     build:
       context: .
       dockerfile: src/Lookout.Api/Dockerfile
+    environment:
+      ConnectionStrings__Lookout: Host=db;Database=lookout;Username=lookout;Password=lookout-dev;GSS Encryption Mode=Disable
+      Lookout__DevAuth: "true"
+      Lookout__Jwt__Key: dev-only-signing-key-change-me-0123456789
+      Lookout__Mqtt__Host: mqtt
+      Lookout__Mqtt__Username: lookout
+      Lookout__Mqtt__Password: lookout-dev-mqtt
+      # Optional TAK export: point at a TAK server's plain CoT input.
+      # Lookout__Cot__Host: freetakserver
+      # Lookout__Cot__Port: "8087"
     volumes:
       - ./scenarios:/app/scenarios:ro
+    depends_on:
+      db: { condition: service_healthy }
+      mqtt: { condition: service_started }
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"]
-      interval: 10s
-      retries: 5
+      # The runtime image has no curl or wget; bash's /dev/tcp is enough for one HTTP GET.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /api/health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '\"status\":\"ok\"' <&3"]
+      interval: 5s
+      retries: 30
+
+  field:
+    build:
+      context: .
+      dockerfile: src/Lookout.Field/Dockerfile
+    environment:
+      <<: *dev-secrets
+      LOOKOUT_API: http://api:8080
+      MQTT_HOST: mqtt
+      MQTT_USER: lookout
+      CLOCK_RATE: "4"
+      ACK_DELAY_SEC: "10"
+    depends_on:
+      api: { condition: service_healthy }
+    restart: "no"
 
   web:
     build:
@@ -19,3 +77,6 @@ services:
       - "8080:80"
     depends_on:
       - api
+
+volumes:
+  pgdata:

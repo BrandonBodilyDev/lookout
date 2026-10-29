@@ -30,13 +30,21 @@ Every number here is a knob in the scenario files, never hard-coded in the engin
 | COMMS LOST | stale at 5 min, escalate to the IC at 15 min (AFF dispatch timer) | **ASK:** how long a crew goes without radio contact before anyone gets worried. |
 | Rule 2 sector (Watch Out #9) | downwind ±45°, within 500 m of the crew | **ASK:** at what distance unburned fuel between you and the fire starts to matter. |
 
+## Weather from the National Weather Service
+| Parameter | Default | Note |
+|---|---|---|
+| Wind source | Field observations; NWS optional per incident | NWS gives the latest observation at the nearest station (KSGU for the demo area), refreshed every 10 minutes. |
+| 10 m wind to 20 ft wind | × 0.87 | NWS reports a 10 m wind; fire models use the 20 ft (6.1 m) reference height. |
+| Wind adjustment factor (20 ft to midflame) | 0.4 | Partially sheltered surface fuels. Fully exposed grass would be about 0.4 to 0.5; under a closed canopy, 0.1 to 0.2. |
+| Head-fire rate under NWS wind | the field's current value | NWS cannot provide a spread rate, so it stays a field or scenario input. |
+
 ## Link budget
 | Parameter | Default | Note |
 |---|---|---|
 | Max uplink message (crew → server) | 340 bytes | Iridium SBD mobile-originated limit (9602/9603 class modems). |
 | Max downlink message (server → crew) | 270 bytes | Iridium SBD mobile-terminated limit. Alerts are downlink, so 270 is the real cap. |
 | Crew position report | every 60 s, 16 bytes binary (crew id, lat/lon as int32 ×1e-7, time, battery) | AFF's floor is one report per 2 min. Changed 2026-10-28 from 20 bytes. |
-| Alert repeat | no faster than every 40 s until acknowledged; escalate to the IC if unacknowledged | SBD needs about 40 s between sessions. Pattern copied from inReach SOS. |
+| Alert repeat | every 60 s (scenario time) until acknowledged; escalate to the IC after 3 min without an acknowledgement | SBD needs about 40 s between sessions, so the governor also spaces any two transmissions to one device by 40 s. Pattern copied from inReach SOS. |
 | Simulated link | 2.4 kbps, one message per 20 s per device | The governor queues, dedupes, and sends highest severity first. |
 
 ## Questions for Dad (one sitting, about 30 minutes)

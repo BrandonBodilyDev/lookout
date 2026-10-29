@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using Lookout.Drone;
 using Lookout.Engine.Geo;
 using Lookout.Engine.Scenarios;
 using Lookout.Engine.Spread;
@@ -9,6 +10,8 @@ using NetTopologySuite.Geometries;
 // Lookout field simulator: plays a scenario's truth over MQTT as the field would.
 //   crew devices  -> 16-byte GPS fixes on the uplink, 8-byte acks for WARNING/CRITICAL alerts
 //   drone         -> burned-area polygons every 30 scenario seconds (broadband link, JSON)
+//                    DRONE_MODE=truth (default) sends the scenario's fire; DRONE_MODE=camera photographs it
+//                    with a virtual survey camera, runs the colour detector, and sends what was detected
 //   weather       -> wind and head-fire rate every scenario minute and at each shift
 // Crew devices in a comms gap neither send nor receive. Configuration is by environment variable.
 
@@ -20,6 +23,8 @@ var scenarioDir = Env("SCENARIO_DIR", FindScenarioDir());
 var clockRate = double.Parse(Env("CLOCK_RATE", "4"), System.Globalization.CultureInfo.InvariantCulture);
 var ackDelay = TimeSpan.FromSeconds(double.Parse(Env("ACK_DELAY_SEC", "8"), System.Globalization.CultureInfo.InvariantCulture));
 var noAck = Env("NO_ACK_CREWS", "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+var droneMode = Env("DRONE_MODE", "truth").ToLowerInvariant();
+var surveyAltitude = double.Parse(Env("SURVEY_ALTITUDE_M", "1800"), System.Globalization.CultureInfo.InvariantCulture);
 var mqtt = new MqttSettings
 {
     Host = Env("MQTT_HOST", "localhost"),
@@ -61,6 +66,23 @@ link.OnMessage = (topic, payload) =>
 };
 await link.StartAsync(scenario.Crews.Select(c => Topics.Downlink(incidentId, c.Id)), ct);
 
+// Camera mode: a nadir survey camera parked over the incident area. At 1800 m above ground with a
+// 71.5 degree lens its footprint is about 2.6 x 1.9 km. That is an incident-awareness aircraft or a
+// Group 3 UAS, not a Mavic Mini, whose 120 m ceiling gives a footprint near 170 m.
+SurveyRig? rig = null;
+if (droneMode == "camera")
+{
+    if (scenario.Terrain is null) throw new InvalidOperationException("Camera mode needs a scenario with terrain.");
+    var pts = scenario.Routes.SelectMany(r => r.Vertices).Select(v => new Coordinate(v.X, v.Y)).ToList();
+    var centre = new Coordinate((pts.Average(p => p.X) + scenario.Fire.FrontAt(0).Centroid.X) / 2, (pts.Average(p => p.Y) + scenario.Fire.FrontAt(0).Centroid.Y) / 2 - 300);
+    var camera = CameraModel.WithAspect(800, 600, 71.5);
+    var projector = new GroundProjector(camera, scenario.Terrain);
+    rig = new SurveyRig(new SyntheticCamera(projector), new ColorFireDetector(), new FrontMapper(scenario.Terrain, projector),
+        new CameraPose(centre, scenario.Terrain.Elevation(centre.X, centre.Y) + surveyAltitude, 0, -90));
+    Log($"Drone mode: virtual survey camera {surveyAltitude:0} m above ground, colour detector");
+}
+Task? surveyInFlight = null;
+
 // 3. Play the scenario.
 var published = scenario.Crews.ToDictionary(c => c.Id, _ => -1);
 var seq = scenario.Crews.ToDictionary(c => c.Id, _ => (ushort)0);
@@ -81,18 +103,33 @@ while (!ct.IsCancellationRequested)
             var (fixT, pos) = crew.Fixes[i];
             var (lon, lat) = frame.ToLonLat(pos);
             var report = new PositionReport(++seq[crew.Id] , startedAt.AddMinutes(fixT / rate), lat, lon, (int)Math.Max(5, 100 - fixT / 2));
-            await link.PublishAsync(Topics.Uplink(incidentId, crew.Id), WireFormat.EncodePosition(report), ct);
+            if (!await link.TryPublishAsync(Topics.Uplink(incidentId, crew.Id), WireFormat.EncodePosition(report), ct)) break;
             published[crew.Id] = i;
         }
     }
 
     var survey = (int)Math.Floor(t / scenario.StepMin);
-    if (survey > lastSurvey)
+    if (survey > lastSurvey && surveyInFlight is not { IsCompleted: false })
     {
-        var front = scenario.Fire.FrontAt(survey * scenario.StepMin);
-        var msg = new DroneFrontMessage(startedAt.AddMinutes(survey * scenario.StepMin / rate), MultiPolygon(front), "field-sim drone survey");
-        await link.PublishAsync(Topics.DroneFront(incidentId), SurveyJson.Encode(msg), ct);
+        var surveyMin = survey * scenario.StepMin;
+        var taken = startedAt.AddMinutes(surveyMin / rate);
+        var truth = scenario.Fire.FrontAt(surveyMin);
         lastSurvey = survey;
+        if (rig is null)
+        {
+            var msg = new DroneFrontMessage(taken, MultiPolygon(truth), "field-sim drone survey (scenario truth)");
+            await link.TryPublishAsync(Topics.DroneFront(incidentId), SurveyJson.Encode(msg), ct);
+        }
+        else
+        {
+            // Rendering and detection take a second or two; keep crew fixes flowing meanwhile.
+            surveyInFlight = Task.Run(async () =>
+            {
+                var detected = rig.Survey(truth, survey);
+                var msg = new DroneFrontMessage(taken, MultiPolygon(detected), "virtual survey camera + colour detector");
+                await link.TryPublishAsync(Topics.DroneFront(incidentId), SurveyJson.Encode(msg), ct);
+            }, ct);
+        }
     }
 
     var phase = WindPhases.At(scenario.Wind, t);
@@ -100,7 +137,7 @@ while (!ct.IsCancellationRequested)
     {
         var c = phase.Conditions;
         var wx = new WeatherMessage(DateTimeOffset.UtcNow, c.WindFromDeg, c.MidflameWindMs, c.HeadRateMPerMin, "field-sim weather station");
-        await link.PublishAsync(Topics.Weather(incidentId), SurveyJson.Encode(wx), ct);
+        await link.TryPublishAsync(Topics.Weather(incidentId), SurveyJson.Encode(wx), ct);
         if (!ReferenceEquals(phase, lastPhase) && lastPhase is not null) Log($"Wind now from {c.WindFromDeg:0}° at {c.MidflameWindMs} m/s");
         lastWeatherMinute = (int)t;
         lastPhase = phase;
@@ -115,7 +152,7 @@ while (!ct.IsCancellationRequested)
     foreach (var a in due)
     {
         if (scenario.Crews.Single(c => c.Id == a.Crew).InCommsGap(t)) { Log($"{a.Crew} ack #{a.Seq} lost (comms gap)"); continue; }
-        await link.PublishAsync(Topics.Uplink(incidentId, a.Crew), WireFormat.EncodeAck(new AckReport(a.Seq, DateTimeOffset.UtcNow)), ct);
+        await link.TryPublishAsync(Topics.Uplink(incidentId, a.Crew), WireFormat.EncodeAck(new AckReport(a.Seq, DateTimeOffset.UtcNow)), ct);
         Log($"{a.Crew} acknowledged #{a.Seq}");
     }
 
