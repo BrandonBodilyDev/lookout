@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from "@microsoft/signalr";
-import { LevelBadge } from "./shared";
+import { LevelBadge, heardAgo } from "./shared";
 import { api, ApiError, post } from "./api";
-import type { IncidentDetail, IncidentSummary, LiveAlert, LiveFrame } from "./types";
+import type { DeviceStatus, IncidentDetail, IncidentSummary, LiveAlert, LiveFrame } from "./types";
 
 const KEY = "lookout.crew";
 
@@ -80,6 +80,7 @@ function CrewScreen({ session, header, onLeave }: { session: CrewSession; header
   const [message, setMessage] = useState<string | null>(null);
   const [gps, setGps] = useState<{ on: boolean; last?: string; accuracy?: number; error?: string }>({ on: false });
   const [push, setPush] = useState<"off" | "on" | "unavailable">("off");
+  const [devices, setDevices] = useState<DeviceStatus[] | null>(null);
   const seen = useRef(new Set<string>());
   const watchId = useRef<number | null>(null);
   const lastSent = useRef(0);
@@ -182,6 +183,16 @@ function CrewScreen({ session, header, onLeave }: { session: CrewSession; header
     setGps({ on: true });
   };
 
+  // The crew's satellite link device(s): is the path for alerts without phone signal alive?
+  useEffect(() => {
+    let live = true;
+    const load = () => api<DeviceStatus[]>(`/api/incidents/${incidentId}/devices`, token)
+      .then((d) => live && setDevices(d.filter((x) => x.crewId === crewId))).catch(() => {});
+    void load();
+    const timer = window.setInterval(load, 15_000);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [incidentId, token, crewId]);
+
   let headline = "Waiting for the engine…";
   if (me) {
     if (me.inSafetyZone) headline = "In safety zone";
@@ -225,7 +236,10 @@ function CrewScreen({ session, header, onLeave }: { session: CrewSession; header
         </div>
         <p className="muted">
           {gps.on ? `GPS on${gps.last ? `: last sent ${gps.last}, ±${gps.accuracy} m` : ", waiting for a fix"}.` : "GPS off: the engine uses this crew's tracker."}
-          {gps.error && ` ${gps.error}`} {push === "on"
+          {gps.error && ` ${gps.error}`} {devices && (devices.length === 0
+            ? "No satellite device is assigned to this crew: alerts reach you only in this app and by push. "
+            : `Satellite device ${devices.map((d) => `${d.deviceId} ${heardAgo(d.lastHeard)}${d.batteryPercent != null ? `, battery ${d.batteryPercent}%` : ""}`).join("; ")}. `)}
+          {push === "on"
             ? "Push alerts are on for this phone."
             : "With the page open, alerts vibrate here. Enable push alerts to be woken with it closed (on iPhone, from the home-screen app)."}
         </p>

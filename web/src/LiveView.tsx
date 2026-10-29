@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HubConnectionBuilder, HubConnectionState, LogLevel, type HubConnection } from "@microsoft/signalr";
 import { MapView, type DrawState, type MapLayout, type MapState } from "./MapView";
-import { ClockAndWind, CrewCard, LevelBadge, compass } from "./shared";
+import { ClockAndWind, CrewCard, LevelBadge, compass, heardAgo } from "./shared";
 import { api, ApiError, post, put, session } from "./api";
 import type {
-  AuditEntry, IncidentDetail, IncidentSummary, LiveAlert, LiveFrame, LonLat, NwsConditions, Role, ScenarioSummary,
+  AuditEntry, DeviceStatus, HeardDevice, IncidentDetail, IncidentSummary, LiveAlert, LiveFrame, LonLat, NwsConditions, Role, ScenarioSummary,
 } from "./types";
 
 /** Open = still needs something: queued, escalated, or sent and awaiting an acknowledgement. Informational messages are done once sent. */
@@ -414,15 +414,6 @@ function DrawTools(props: {
   );
 }
 
-interface DeviceStatus { deviceId: string; crewId: string; lastHeard: string | null; batteryPercent: number | null }
-interface HeardDevice { deviceId: string; lastHeard: string; batteryPercent: number | null; messages: number }
-
-const ago = (iso: string | null) => {
-  if (!iso) return "not heard since the server started";
-  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
-  return s < 60 ? `heard ${Math.round(s)} s ago` : `heard ${Math.round(s / 60)} min ago`;
-};
-
 /**
  * Assign link devices (modem IMEI or simulator id) to crews. The server ignores reports from
  * unassigned devices, so any it has heard from recently are listed for one-click assignment.
@@ -472,7 +463,7 @@ function DeviceTools({ detail, token, onChanged }: { detail: IncidentDetail; tok
                 <span>
                   <b>{a.crew}</b> {a.device}
                   <span className="muted device-heard">
-                    {ago(st?.lastHeard ?? null)}{st?.batteryPercent != null && ` · battery ${st.batteryPercent}%`}
+                    {heardAgo(st?.lastHeard ?? null)}{st?.batteryPercent != null && ` · battery ${st.batteryPercent}%`}
                   </span>
                 </span>
                 <button className="btn small" onClick={() => {
@@ -490,7 +481,7 @@ function DeviceTools({ detail, token, onChanged }: { detail: IncidentDetail; tok
           <ul className="device-list">
             {unassigned.map((u) => (
               <li key={u.deviceId}>
-                <span>{u.deviceId}<span className="muted device-heard">{ago(u.lastHeard)} · {u.messages} messages</span></span>
+                <span>{u.deviceId}<span className="muted device-heard">{heardAgo(u.lastHeard)} · {u.messages} messages</span></span>
                 <button className="btn small" onClick={() => setDevice(u.deviceId)}>Use</button>
               </li>
             ))}

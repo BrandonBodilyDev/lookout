@@ -99,3 +99,10 @@ export function CrewCard({ crew, meta }: { crew: CrewView; meta: { name: string;
     </article>
   );
 }
+
+/** "heard 12 s ago" from an ISO time; last-heard times are kept in server memory, so null after a restart. */
+export function heardAgo(iso: string | null): string {
+  if (!iso) return "not heard since the server started";
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  return s < 60 ? `heard ${Math.round(s)} s ago` : `heard ${Math.round(s / 60)} min ago`;
+}

@@ -198,3 +198,8 @@ export interface CrewView {
   routeId?: string;
   routeMargins?: RouteMargin[];
 }
+
+/** A link device assigned in an incident, with when the server last heard from it. */
+export interface DeviceStatus { deviceId: string; crewId: string; lastHeard: string | null; batteryPercent: number | null }
+/** A device heard recently that no incident has assigned. */
+export interface HeardDevice { deviceId: string; lastHeard: string; batteryPercent: number | null; messages: number }
