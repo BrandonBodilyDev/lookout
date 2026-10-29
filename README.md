@@ -311,7 +311,7 @@ The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add
 | `src/Lookout.Field` | Field simulator: plays a scenario's truth over MQTT and simulates crew devices. |
 | `src/Lookout.Sim` | Console runner for replays (add `--camera` to put the drone pipeline in the loop), the `drone` commands, and the `dem` command that builds a scenario's terrain grid. |
 | `tests/Lookout.Engine.Tests` | Formulas, grid oracles, travel rates, latch, state machine, wire formats, governor, demo and control scenarios, drone pipeline, ONNX path. |
-| `tests/Lookout.Api.Tests` | Integration tests on a TimescaleDB container, run as the restricted runtime role: workflow, concurrency, roles, audit, Web Push against a fake push service, MQTT reconnects against a real broker, TAK sender. |
+| `tests/Lookout.Api.Tests` | Integration tests on a TimescaleDB container, run as the restricted runtime role: workflow, concurrency, roles, audit, Web Push against a fake push service, MQTT reconnects against a real broker, TAK sender, device registry and readiness, and the live runner end to end through a Mosquitto container. |
 | `web` | Vite + React + TypeScript dashboard on MapLibre GL JS, with Replay, Live and Crew views. |
 | `scenarios` | Scenario YAML files and their terrain grids. |
 | `deploy/mosquitto` | Broker configuration, access rules, and a development password file. |
