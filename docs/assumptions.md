@@ -16,12 +16,13 @@ Every number here is a knob in the scenario files, never hard-coded in the engin
 |---|---|---|
 | Head-fire rate of spread R | 10–30 m/min before the wind shift, 60–150 after, 150–300 in a blowup | Sourced ranges (GTR-153 Table 5; grass 20% rule, Cruz, Alexander & Kilinc 2022; South Canyon and Yarnell reports). Changed 2026-10-28 from 20–60. R is an input, never computed from fuel moisture. |
 | Length-to-breadth ratio | LB = 0.936·e^(0.2566·U) + 0.461·e^(−0.1548·U) − 0.397, U = midflame wind in m/s, capped at 8 | FARSITE eq. 13 (Finney 1998, RMRS-RP-4 p. 7), after Anderson 1983. Backing R_B = R_H(1−e)/(1+e), rate at angle γ R_γ = R_H(1−e)/(1−e·cos γ), e = √(LB²−1)/LB (Andrews 2018, GTR-371 §6.2). |
-| Slope effect on spread | spread rate doubles for each 10° of upslope; head direction steered by the vector sum of wind and upslope | McArthur 1967 / Noble 1980 rule, not fully validated; Cheney 2001 via Butler 2014 gives doubling at about 18% and 36% grade. Alternative: Rothermel slope factor φs = 5.275·β^−0.3·tan²φ. Downslope gives no reduction. |
+| Slope effect on spread | Implemented per grid edge: spread along an edge is multiplied by 2^(θ/10) for θ degrees of upslope along that edge, capped at 30°, with no reduction downslope | McArthur 1967 / Noble 1980 rule, not fully validated; Cheney 2001 via Butler 2014 gives doubling at about 18% and 36% grade. Applying it per edge means the head bends toward upslope on its own; no separate wind-plus-slope vector is computed. Alternative for later: Rothermel slope factor φs = 5.275·β^−0.3·tan²φ. |
 | Spotting | none | Out of scope; the README says so. |
 
 ## Alert thresholds
 | Parameter | Default | Note |
 |---|---|---|
+| Downgrade hold | 2 min | A lower level must hold this long before it is sent; escalations go out at once. Stops a margin sitting on a threshold from flapping over the link (alarm fatigue). |
 | Safety buffer added to crew travel time | 10 min | **ASK:** how many minutes of warning actually changes a decision? |
 | WATCH | margin under 30 min | Fryer, Dennison & Cova 2013 used 15/30/45-min buffers; ERI uses 10/20/30-min frames. Changed 2026-10-28 from 20. |
 | WARNING | margin under 15 min | Changed 2026-10-28 from 10. |

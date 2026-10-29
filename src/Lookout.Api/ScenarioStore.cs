@@ -13,7 +13,7 @@ public sealed class ScenarioStore(string directory)
 
     public IEnumerable<Scenario> List() =>
         System.IO.Directory.EnumerateFiles(Directory, "*.yaml")
-            .Select(ScenarioLoader.LoadFile)
+            .Select(p => ScenarioLoader.LoadFile(p, loadTerrain: false))
             .OrderBy(s => s.Name);
 
     public SimulationResult? Run(string id)

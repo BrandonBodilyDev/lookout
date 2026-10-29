@@ -36,7 +36,7 @@ public static class TimelineDto
                 fr.T,
                 Clock = Simulator.Clock(s, fr.T),
                 Wind = new { fr.Wind.WindFromDeg, fr.Wind.MidflameWindMs, fr.Wind.HeadRateMPerMin },
-                Fire = fr.Front.IsEmpty ? [] : Ring(f, ((Polygon)fr.Front).ExteriorRing),
+                Fire = MultiPolygon(f, fr.Front),
                 Crews = fr.Crews.Select(c => new
                 {
                     Id = c.CrewId,
@@ -51,6 +51,7 @@ public static class TimelineDto
                     LeaveBy = double.IsFinite(c.Cutoff.LeaveByMin) ? Simulator.Clock(s, c.Cutoff.LeaveByMin) : null,
                     FireAtCut = double.IsFinite(c.Cutoff.FireEtaAtCutMin) ? Simulator.Clock(s, c.Cutoff.FireEtaAtCutMin) : null,
                     Cut = c.Cutoff.CutPoint is { } cp ? Point(f, cp) : null,
+                    LeaveNowZone = c.Cutoff.TriggerZone is { IsEmpty: false } tz ? MultiPolygon(f, tz) : null,
                     Findings = c.Findings.Select(x => new { x.Rule, Level = x.Level.ToString().ToLowerInvariant(), x.Summary }),
                     c.BurnedOver,
                 }),
@@ -79,6 +80,17 @@ public static class TimelineDto
                 }),
             },
         };
+    }
+
+    /// <summary>GeoJSON MultiPolygon coordinates: polygons, then rings (exterior first), then [lon, lat].</summary>
+    private static double[][][][] MultiPolygon(LocalFrame f, Geometry g)
+    {
+        if (g.IsEmpty) return [];
+        return Enumerable.Range(0, g.NumGeometries)
+            .Select(g.GetGeometryN)
+            .OfType<Polygon>()
+            .Select(p => new[] { Ring(f, p.ExteriorRing) }.Concat(p.InteriorRings.Select(r => Ring(f, r))).ToArray())
+            .ToArray();
     }
 
     private static double[][] Ring(LocalFrame f, LineString ring) =>

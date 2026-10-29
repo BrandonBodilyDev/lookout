@@ -21,6 +21,13 @@ duration_min: 45
 step_min: 0.5
 origin: { lon: -113.620, lat: 37.360 }
 
+# 30 m elevation grid in this scenario's local frame (metres east/north of origin), built with
+#   dotnet run --project src/Lookout.Sim -- dem scenarios/pine-valley-wind-shift.yaml scenarios/terrain/pine-valley.asc -2400 1600 -2000 1800 30
+# from AWS Terrain Tiles (Terrarium encoding; USGS 3DEP in the US). Fire spread and crew travel both use it.
+terrain:
+  file: terrain/pine-valley.asc
+  source: AWS Terrain Tiles (USGS 3DEP), z14, sampled 2026-10-28
+
 fire:
   ignition: [-113.630172, 37.358203]
   ignition_min: -30          # ignited 13:30, 30 minutes before the scenario opens
@@ -29,7 +36,7 @@ fire:
 # head_rate_m_per_min is an input, from the sourced ranges in docs/assumptions.md.
 wind:
   - { start_min: -30, from_deg: 0,   midflame_wind_ms: 3.0, head_rate_m_per_min: 20 }
-  - { start_min: 20,  from_deg: 270, midflame_wind_ms: 6.0, head_rate_m_per_min: 105 }
+  - { start_min: 20,  from_deg: 270, midflame_wind_ms: 6.0, head_rate_m_per_min: 95 }
 
 safety_zones:
   - id: SZ-1

@@ -12,7 +12,7 @@ namespace Lookout.Engine.Spread;
 /// this model and free of the self-intersection problems of vertex-marching wavelet codes.
 /// Terrain and fuel variation are out of scope for Phase 0 (they arrive with the grid model).
 /// </summary>
-public sealed class ScriptedFire
+public sealed class ScriptedFire : IFireTruth
 {
     private static readonly GeometryFactory Factory = new();
     private readonly Coordinate _ignition;
@@ -54,6 +54,16 @@ public sealed class ScriptedFire
             if (t >= end) _boundaryFronts[i] = front;
         }
         return front;
+    }
+
+    public double? FirstArrival(LineString line, double horizonMin)
+    {
+        for (var t = 0.0; t <= horizonMin + 1e-9; t += 0.1)
+        {
+            var front = FrontAt(t);
+            if (!front.IsEmpty && front.Intersects(line)) return Math.Round(t, 1);
+        }
+        return null;
     }
 
     private static Geometry Grow(Geometry front, Coordinate[] brush)

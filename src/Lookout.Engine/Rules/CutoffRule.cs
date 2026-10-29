@@ -31,21 +31,10 @@ public static class CutoffRule
         if (zone.Area.Contains(crewPoint))
             return CutoffResult.Safe(zone.Id);
 
-        // Getting from the crew to the route: straight line at flat speed, slowed for off-trail travel.
-        var s0 = profile.Project(crewPosition);
-        var onRoute = profile.PointAt(s0);
-        var offRouteM = crewPosition.Distance(onRoute);
-        var offRouteMin = offRouteM / (TravelRate.SpeedMs(0, profile.Pace) * settings.OffTrailFactor) / 60.0;
-        var travelAtS0 = profile.TravelMinutesTo(s0);
-
         var frontVertices = FrontVertices(front);
         double FireEta(Coordinate p) => PredictFireMinutes(front, frontVertices, p, wind);
 
-        // Points still ahead of the crew: the projected point itself, then every sample past it.
-        var candidates = new List<(Coordinate P, double CrewMin)> { (onRoute, offRouteMin) };
-        candidates.AddRange(profile.Samples
-            .Where(s => s.S > s0)
-            .Select(s => (s.Point, offRouteMin + s.TravelMin - travelAtS0)));
+        var candidates = RemainingRoute(profile, crewPosition, settings);
 
         var margin = double.PositiveInfinity;
         Coordinate cut = candidates[^1].P;
@@ -62,12 +51,37 @@ public static class CutoffRule
             }
         }
 
-        var slack = margin - settings.BufferMin;
-        var level = slack < settings.CriticalMin ? AlertLevel.Critical
-            : slack < settings.WarningMin ? AlertLevel.Warning
-            : slack < settings.WatchMin ? AlertLevel.Watch
-            : AlertLevel.None;
+        return Result(zone, settings, nowMin, margin, cut, fireAtCut, crewAtCut, candidates[^1].CrewMin, null);
+    }
 
+    /// <summary>
+    /// The crew's remaining route: the point where they join it (reached off-trail at flat speed
+    /// times the off-trail factor), then every sample beyond it, each with crew minutes from now.
+    /// </summary>
+    public static List<(Coordinate P, double CrewMin)> RemainingRoute(RouteProfile profile, Coordinate crewPosition, AlertSettings settings)
+    {
+        var s0 = profile.Project(crewPosition);
+        var onRoute = profile.PointAt(s0);
+        var offRouteMin = crewPosition.Distance(onRoute) / (TravelRate.SpeedMs(0, profile.Pace) * settings.OffTrailFactor) / 60.0;
+        var travelAtS0 = profile.TravelMinutesTo(s0);
+        var candidates = new List<(Coordinate P, double CrewMin)> { (onRoute, offRouteMin) };
+        candidates.AddRange(profile.Samples
+            .Where(s => s.S > s0)
+            .Select(s => (s.Point, offRouteMin + s.TravelMin - travelAtS0)));
+        return candidates;
+    }
+
+    public static AlertLevel LevelFor(double slackMin, AlertSettings settings) =>
+        slackMin < settings.CriticalMin ? AlertLevel.Critical
+        : slackMin < settings.WarningMin ? AlertLevel.Warning
+        : slackMin < settings.WatchMin ? AlertLevel.Watch
+        : AlertLevel.None;
+
+    internal static CutoffResult Result(
+        SafetyZone zone, AlertSettings settings, double nowMin, double margin, Coordinate cut,
+        double fireAtCut, double crewAtCut, double crewTravel, Geometry? triggerZone)
+    {
+        var slack = margin - settings.BufferMin;
         return new CutoffResult(
             InSafetyZone: false,
             SafetyZoneId: zone.Id,
@@ -76,9 +90,10 @@ public static class CutoffRule
             LeaveByMin: nowMin + slack,
             CutPoint: cut,
             FireEtaAtCutMin: nowMin + fireAtCut,
-            CrewTravelMin: candidates[^1].CrewMin,
+            CrewTravelMin: crewTravel,
             CrewMinToCut: crewAtCut,
-            Level: level);
+            Level: LevelFor(slack, settings),
+            TriggerZone: triggerZone);
     }
 
     /// <summary>
@@ -108,9 +123,11 @@ public static class CutoffRule
 /// <param name="CutPoint">Route point with the smallest margin: where the fire would cut the route.</param>
 /// <param name="FireEtaAtCutMin">Scenario minute the fire is predicted at the cut point.</param>
 /// <param name="CrewTravelMin">Minutes for the crew to reach the safety zone if they leave now.</param>
+/// <param name="TriggerZone">Grid engine only: where the fire front would force the crew to leave immediately.</param>
 public sealed record CutoffResult(
     bool InSafetyZone, string SafetyZoneId, double MarginMin, double SlackMin, double LeaveByMin,
-    Coordinate? CutPoint, double FireEtaAtCutMin, double CrewTravelMin, double CrewMinToCut, AlertLevel Level)
+    Coordinate? CutPoint, double FireEtaAtCutMin, double CrewTravelMin, double CrewMinToCut, AlertLevel Level,
+    Geometry? TriggerZone = null)
 {
     public static CutoffResult Safe(string zoneId) =>
         new(true, zoneId, double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity,

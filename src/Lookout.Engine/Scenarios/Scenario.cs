@@ -1,5 +1,6 @@
 using Lookout.Engine.Geo;
 using Lookout.Engine.Spread;
+using Lookout.Engine.Terrain;
 using Lookout.Engine.Travel;
 using NetTopologySuite.Geometries;
 
@@ -15,12 +16,14 @@ public sealed class Scenario
     public required double DurationMin { get; init; }
     public required double StepMin { get; init; }
     public required LocalFrame Frame { get; init; }
-    public required ScriptedFire Fire { get; init; }
+    public required IFireTruth Fire { get; init; }
     public required IReadOnlyList<WindPhase> Wind { get; init; }
     public required IReadOnlyList<EscapeRoute> Routes { get; init; }
     public required IReadOnlyList<SafetyZone> SafetyZones { get; init; }
     public required IReadOnlyList<Crew> Crews { get; init; }
     public required AlertSettings Alerts { get; init; }
+    /// <summary>Ground elevation; null for flat-ground scenarios (Phase 0 ellipse engine).</summary>
+    public TerrainGrid? Terrain { get; init; }
 
     public EscapeRoute Route(string id) => Routes.Single(r => r.Id == id);
     public SafetyZone SafetyZone(string id) => SafetyZones.Single(z => z.Id == id);
@@ -103,4 +106,6 @@ public sealed record AlertSettings
     public double UnburnedFuelDistanceM { get; init; } = 500;
     public double UnburnedFuelHalfAngleDeg { get; init; } = 45;
     public double OffTrailFactor { get; init; } = 0.5;
+    /// <summary>A lower alert level must hold this long before the downgrade is sent.</summary>
+    public double DowngradeHoldMin { get; init; } = 2;
 }

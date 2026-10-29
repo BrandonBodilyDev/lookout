@@ -2,6 +2,8 @@
 
 export type Level = "none" | "watch" | "warning" | "critical";
 export type LonLat = [number, number];
+/** GeoJSON MultiPolygon coordinates. */
+export type MultiPolygonCoords = LonLat[][][];
 
 export interface Finding {
   rule: string;
@@ -22,6 +24,7 @@ export interface CrewFrame {
   leaveBy: string | null;
   fireAtCut: string | null;
   cut: LonLat | null;
+  leaveNowZone: MultiPolygonCoords | null;
   findings: Finding[];
   burnedOver: boolean;
 }
@@ -30,7 +33,7 @@ export interface Frame {
   t: number;
   clock: string;
   wind: { windFromDeg: number; midflameWindMs: number; headRateMPerMin: number };
-  fire: LonLat[];
+  fire: MultiPolygonCoords;
   crews: CrewFrame[];
 }
 

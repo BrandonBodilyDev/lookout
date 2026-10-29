@@ -16,12 +16,13 @@ public static class Simulator
 {
     public static SimulationResult Run(Scenario scenario)
     {
+        var grid = scenario.Terrain is { } terrain ? new SpreadGrid(terrain) : null;
         var profiles = scenario.Crews.ToDictionary(
             c => c.Id, c => new RouteProfile(scenario.Route(c.RouteId), c.Pace));
 
         var frames = new List<Frame>();
         var alerts = new List<AlertEvent>();
-        var lastLevel = scenario.Crews.ToDictionary(c => c.Id, _ => AlertLevel.None);
+        var latches = scenario.Crews.ToDictionary(c => c.Id, _ => new AlertLatch(scenario.Alerts.DowngradeHoldMin));
         var progress = new Dictionary<string, Progress>();
 
         var steps = (int)Math.Round(scenario.DurationMin / scenario.StepMin);
@@ -39,7 +40,9 @@ public static class Simulator
                 var fix = crew.LastFixAt(t);
                 var known = fix?.Position ?? crew.TruePositionAt(0);
 
-                var cutoff = CutoffRule.Evaluate(profile, zone, known, front, wind, scenario.Alerts, t);
+                var cutoff = grid is null
+                    ? CutoffRule.Evaluate(profile, zone, known, front, wind, scenario.Alerts, t)
+                    : GridCutoffRule.Evaluate(grid, profile, zone, known, front, wind, scenario.Alerts, t);
                 var enRoute = IsEnRoute(profile, known, fix?.T, progress, crew.Id);
                 var findings = new List<Finding>();
                 if (cutoff.Level > AlertLevel.None)
@@ -55,11 +58,10 @@ public static class Simulator
                     crew.Id, truth, known, fix?.T, enRoute, cutoff, findings, level,
                     BurnedOver: !front.IsEmpty && front.Contains(front.Factory.CreatePoint(truth))));
 
-                if (level != lastLevel[crew.Id])
-                {
-                    alerts.Add(BuildAlert(scenario, crew, profile.Route, t, lastLevel[crew.Id], level, cutoff, findings));
-                    lastLevel[crew.Id] = level;
-                }
+                var latch = latches[crew.Id];
+                var before = latch.Reported;
+                if (latch.Update(level, t))
+                    alerts.Add(BuildAlert(scenario, crew, profile.Route, t, before, latch.Reported, cutoff, findings));
             }
 
             frames.Add(new Frame(t, front, wind, crewStates));
@@ -110,20 +112,8 @@ public static class Simulator
     }
 
     /// <summary>Truth: when the real fire first touches each route.</summary>
-    private static IReadOnlyList<RouteScore> ScoreRoutes(Scenario s)
-    {
-        const double fine = 0.1;
-        return s.Routes.Select(r =>
-        {
-            double? cut = null;
-            for (var t = 0.0; t <= s.DurationMin + 1e-9; t += fine)
-            {
-                var front = s.Fire.FrontAt(t);
-                if (!front.IsEmpty && front.Intersects(r.Line)) { cut = Math.Round(t, 1); break; }
-            }
-            return new RouteScore(r.Id, cut);
-        }).ToList();
-    }
+    private static IReadOnlyList<RouteScore> ScoreRoutes(Scenario s) =>
+        s.Routes.Select(r => new RouteScore(r.Id, s.Fire.FirstArrival(r.Line, s.DurationMin))).ToList();
 
     private static IReadOnlyList<CrewScore> ScoreCrews(Scenario s, List<Frame> frames) =>
         s.Crews.Select(c =>

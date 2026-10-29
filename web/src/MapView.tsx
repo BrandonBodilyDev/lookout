@@ -42,9 +42,18 @@ function frameData(tl: Timeline, frame: Frame) {
   }
   return {
     fire: fc(
-      frame.fire.length > 3
-        ? [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [frame.fire] } }]
+      frame.fire.length > 0
+        ? [{ type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates: frame.fire } }]
         : [],
+    ),
+    zonesNow: fc(
+      frame.crews
+        .filter((c) => c.leaveNowZone && c.level !== "none" && !c.enRoute)
+        .map((c) => ({
+          type: "Feature",
+          properties: { id: c.id, level: c.level },
+          geometry: { type: "MultiPolygon", coordinates: c.leaveNowZone! },
+        })),
     ),
     routes: fc(
       tl.routes.map((r) => ({
@@ -139,6 +148,7 @@ export function MapView({ timeline, frame }: { timeline: Timeline; frame: Frame 
       map.addSource("crews", { type: "geojson", data: d.crews });
       map.addSource("truth", { type: "geojson", data: d.truth });
       map.addSource("cuts", { type: "geojson", data: d.cuts });
+      map.addSource("leave-now", { type: "geojson", data: d.zonesNow });
 
       map.addLayer({ id: "zones-fill", type: "fill", source: "zones", paint: { "fill-color": "#2f9e5b", "fill-opacity": 0.25 } });
       map.addLayer({ id: "zones-line", type: "line", source: "zones", paint: { "line-color": "#1f7a43", "line-width": 2 } });
@@ -148,6 +158,15 @@ export function MapView({ timeline, frame }: { timeline: Timeline; frame: Frame 
         source: "zones",
         layout: { "text-field": ["get", "id"], "text-size": 12, "text-font": ["Noto Sans Bold"] },
         paint: { "text-color": "#14532d", "text-halo-color": "#fff", "text-halo-width": 1.5 },
+      });
+
+      // Leave-now zone: if the fire front is inside it, the crew must already be moving.
+      map.addLayer({ id: "leave-now-fill", type: "fill", source: "leave-now", paint: { "fill-color": levelColor, "fill-opacity": 0.08 } });
+      map.addLayer({
+        id: "leave-now-line",
+        type: "line",
+        source: "leave-now",
+        paint: { "line-color": levelColor, "line-width": 2, "line-dasharray": [3, 2], "line-opacity": 0.9 },
       });
 
       map.addLayer({ id: "fire-fill", type: "fill", source: "fire", paint: { "fill-color": "#e8542f", "fill-opacity": 0.45 } });
@@ -224,7 +243,7 @@ export function MapView({ timeline, frame }: { timeline: Timeline; frame: Frame 
       const bounds = new maplibregl.LngLatBounds();
       tl.routes.forEach((r) => r.path.forEach(([lon, lat]) => bounds.extend([lon, lat])));
       tl.safetyZones.forEach((z) => z.ring.forEach((p) => bounds.extend(p)));
-      tl.frames[tl.frames.length - 1].fire.forEach((p) => bounds.extend(p));
+      tl.frames[tl.frames.length - 1].fire.forEach((poly) => poly[0].forEach((p) => bounds.extend(p)));
       map.fitBounds(bounds, { padding: 60, duration: 0 });
 
       ready.current = true;
@@ -248,6 +267,7 @@ export function MapView({ timeline, frame }: { timeline: Timeline; frame: Frame 
     (map.getSource("crews") as GeoJSONSource).setData(d.crews);
     (map.getSource("truth") as GeoJSONSource).setData(d.truth);
     (map.getSource("cuts") as GeoJSONSource).setData(d.cuts);
+    (map.getSource("leave-now") as GeoJSONSource).setData(d.zonesNow);
   }, [timeline, frame]);
 
   return <div ref={container} className="map" role="region" aria-label="Incident map" />;

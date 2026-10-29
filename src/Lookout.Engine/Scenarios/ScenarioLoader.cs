@@ -1,6 +1,7 @@
 using System.Globalization;
 using Lookout.Engine.Geo;
 using Lookout.Engine.Spread;
+using Lookout.Engine.Terrain;
 using Lookout.Engine.Travel;
 using NetTopologySuite.Geometries;
 using YamlDotNet.Serialization;
@@ -15,9 +16,12 @@ public static class ScenarioLoader
         .WithNamingConvention(UnderscoredNamingConvention.Instance)
         .Build();
 
-    public static Scenario LoadFile(string path) => Parse(File.ReadAllText(path));
+    /// <param name="loadTerrain">False reads the scenario without its terrain grid (used to build that grid).</param>
+    public static Scenario LoadFile(string path, bool loadTerrain = true) =>
+        Parse(File.ReadAllText(path), loadTerrain ? Path.GetDirectoryName(Path.GetFullPath(path)) : null);
 
-    public static Scenario Parse(string yaml)
+    /// <param name="baseDir">Folder that relative terrain paths resolve against; null skips terrain.</param>
+    public static Scenario Parse(string yaml, string? baseDir = null)
     {
         var f = Yaml.Deserialize<ScenarioFile>(yaml)
             ?? throw new InvalidDataException("Scenario file is empty.");
@@ -51,6 +55,10 @@ public static class ScenarioLoader
                 throw new InvalidDataException($"Route {r.Id} must end inside safety zone {zone.Id}.");
         }
 
+        var terrain = f.Terrain is { } tf && baseDir is not null
+            ? TerrainGrid.ReadAscii(Path.Combine(baseDir, tf.File))
+            : null;
+
         var crews = f.Crews.Select(c =>
         {
             if (routes.All(r => r.Id != c.Route))
@@ -77,12 +85,15 @@ public static class ScenarioLoader
             DurationMin = f.DurationMin,
             StepMin = f.StepMin,
             Frame = frame,
-            Fire = new ScriptedFire(Local(f.Fire.Ignition), f.Fire.IgnitionMin, wind),
+            Fire = terrain is null
+                ? new ScriptedFire(Local(f.Fire.Ignition), f.Fire.IgnitionMin, wind)
+                : new GridFire(new SpreadGrid(terrain), Local(f.Fire.Ignition), f.Fire.IgnitionMin, wind, f.DurationMin),
             Wind = wind,
             Routes = routes,
             SafetyZones = zones,
             Crews = crews,
             Alerts = f.Alerts ?? new AlertSettings(),
+            Terrain = terrain,
         };
     }
 
@@ -115,6 +126,13 @@ public static class ScenarioLoader
         public List<RouteFile> Routes { get; set; } = [];
         public List<CrewFile> Crews { get; set; } = [];
         public AlertSettings? Alerts { get; set; }
+        public TerrainFile? Terrain { get; set; }
+    }
+
+    private sealed class TerrainFile
+    {
+        public string File { get; set; } = "";
+        public string Source { get; set; } = "";
     }
 
     private sealed class LonLat

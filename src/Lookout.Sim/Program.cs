@@ -1,8 +1,24 @@
 using Lookout.Engine.Scenarios;
 using Lookout.Engine.Simulation;
 
-// Lookout scenario runner: prints the alert log and the truth scorecard for one scenario.
-// Usage: dotnet run --project src/Lookout.Sim -- scenarios/pine-valley-wind-shift.yaml
+using System.Globalization;
+using Lookout.Sim;
+
+// Lookout scenario runner.
+//   Run a scenario:   dotnet run --project src/Lookout.Sim -- scenarios/pine-valley-wind-shift.yaml
+//   Build terrain:    dotnet run --project src/Lookout.Sim -- dem <scenario.yaml> <out.asc> <west> <east> <south> <north> [cell]
+//                     (extent in metres in the scenario's local frame, east and north of its origin)
+if (args.Length > 0 && args[0] == "dem")
+{
+    double D(int i) => double.Parse(args[i], CultureInfo.InvariantCulture);
+    var target = ScenarioLoader.LoadFile(args[1], loadTerrain: false);
+    var grid = await TerrariumDem.BuildAsync(target.Frame, D(3), D(4), D(5), D(6), args.Length > 7 ? D(7) : 30);
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(args[2]))!);
+    grid.WriteAscii(args[2]);
+    Console.WriteLine($"Wrote {args[2]}: elevation {grid.Z.Min():0} to {grid.Z.Max():0} m.");
+    return;
+}
+
 var path = args.Length > 0 ? args[0] : Path.Combine("scenarios", "pine-valley-wind-shift.yaml");
 var scenario = ScenarioLoader.LoadFile(path);
 var result = Simulator.Run(scenario);
