@@ -19,6 +19,31 @@ jobs:
       - name: Demo scenario alert log
         run: dotnet run --project src/Lookout.Sim -- scenarios/pine-valley-wind-shift.yaml
 
+  migrations:
+    name: Release migration script (idempotent, applied twice)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet tool restore
+      - name: Generate the reviewed release script
+        run: dotnet ef migrations script --idempotent --project src/Lookout.Api -o release.sql
+      - name: Start a fresh TimescaleDB with the runtime role
+        run: |
+          docker run -d --name db -e POSTGRES_USER=lookout -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=lookout \
+            -v "$PWD/deploy/postgres/020_lookout_runtime.sql":/docker-entrypoint-initdb.d/020_lookout_runtime.sql:ro \
+            timescale/timescaledb-ha:pg17.11-ts2.31.0
+          for i in $(seq 1 60); do docker exec db pg_isready -U lookout -d lookout && break; sleep 2; done
+          sleep 5
+      - name: Apply twice; the second run must be a no-op
+        run: |
+          docker cp release.sql db:/tmp/release.sql
+          docker exec db psql -U lookout -d lookout -v ON_ERROR_STOP=1 -q -f /tmp/release.sql
+          docker exec db psql -U lookout -d lookout -v ON_ERROR_STOP=1 -q -f /tmp/release.sql
+          docker exec db psql -U lookout -d lookout -tAc "select count(*) from timescaledb_information.hypertables" | grep -qx 2
+
   web:
     name: Dashboard build
     runs-on: ubuntu-latest

@@ -12,8 +12,8 @@ namespace Lookout.Api.Data.Migrations
         {
             // TimescaleDB partitions the two time-series tables by time.
             migrationBuilder.Sql("CREATE EXTENSION IF NOT EXISTS timescaledb;");
-            migrationBuilder.Sql("SELECT create_hypertable('audit_events', by_range('Time', INTERVAL '1 day'));");
-            migrationBuilder.Sql("SELECT create_hypertable('crew_fixes', by_range('Time', INTERVAL '1 day'));");
+            migrationBuilder.Sql("DO $$ BEGIN PERFORM create_hypertable('audit_events', by_range('Time', INTERVAL '1 day')); END $$;");
+            migrationBuilder.Sql("DO $$ BEGIN PERFORM create_hypertable('crew_fixes', by_range('Time', INTERVAL '1 day')); END $$;");
 
             // The audit trail is append-only. Corrections are new events, never edits.
             migrationBuilder.Sql("""
