@@ -105,7 +105,9 @@ public sealed class LiveRunner(
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
         var running = await db.Incidents.AsNoTracking().Where(i => i.Status == IncidentStatus.Running).Select(i => i.Id).ToListAsync(ct);
-        foreach (var id in running) await LoadAsync(id, ct);
+        // One incident whose scenario cannot be loaded (a bad or newer-format file) must not stop the
+        // runner for every other incident; it found its way into a real restart test.
+        foreach (var id in running) await Guard($"loading incident {id}", () => LoadAsync(id, ct), ct);
     }
 
     private async Task<IncidentRuntime?> LoadAsync(Guid id, CancellationToken ct)

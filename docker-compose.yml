@@ -10,6 +10,7 @@ x-dev-secrets: &dev-secrets
 
 services:
   db:
+    restart: unless-stopped
     image: timescale/timescaledb-ha:pg17.11-ts2.31.0
     environment:
       POSTGRES_DB: lookout
@@ -24,6 +25,7 @@ services:
       retries: 20
 
   mqtt:
+    restart: unless-stopped
     image: eclipse-mosquitto:2.1.2-alpine
     volumes:
       - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
@@ -33,6 +35,7 @@ services:
       - "127.0.0.1:1883:1883"   # so a local field simulator or MQTT client can join
 
   api:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: src/Lookout.Api/Dockerfile
@@ -76,6 +79,7 @@ services:
     restart: "no"
 
   web:
+    restart: unless-stopped
     build:
       context: web
     ports:
