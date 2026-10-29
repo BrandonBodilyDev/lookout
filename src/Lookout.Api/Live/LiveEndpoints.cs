@@ -79,6 +79,11 @@ public static class LiveEndpoints
             snapshots.Get(id) is { } f ? Results.Ok(f) : Results.NoContent())
             .RequireAuthorization(Policies.Read);
 
+        // Current Cursor on Target events, for inspection or import into a TAK client.
+        api.MapGet("/{id:guid}/cot", (Guid id, LiveSnapshots snapshots) =>
+            Results.Text(new System.Xml.Linq.XElement("events", snapshots.GetCot(id)).ToString(), "application/xml"))
+            .RequireAuthorization(Policies.Read);
+
         api.MapGet("/{id:guid}/fixes", async (Guid id, string crewId, int? limit, LookoutDb db, CancellationToken ct) =>
             await db.CrewFixes.AsNoTracking().Where(f => f.IncidentId == id && f.CrewId == crewId)
                 .OrderByDescending(f => f.Time).Take(Math.Clamp(limit ?? 100, 1, 1000))

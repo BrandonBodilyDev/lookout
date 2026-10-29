@@ -51,6 +51,9 @@ public static class LiveFrame
 public sealed class LiveSnapshots
 {
     private readonly ConcurrentDictionary<Guid, object> _frames = new();
+    private readonly ConcurrentDictionary<Guid, IReadOnlyList<System.Xml.Linq.XElement>> _cot = new();
     public void Set(Guid incidentId, object frame) => _frames[incidentId] = frame;
     public object? Get(Guid incidentId) => _frames.GetValueOrDefault(incidentId);
+    public void SetCot(Guid incidentId, IReadOnlyList<System.Xml.Linq.XElement> events) => _cot[incidentId] = events;
+    public IReadOnlyList<System.Xml.Linq.XElement> GetCot(Guid incidentId) => _cot.GetValueOrDefault(incidentId) ?? [];
 }

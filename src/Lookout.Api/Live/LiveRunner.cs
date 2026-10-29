@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using System.Xml.Linq;
 using Lookout.Api.Data;
+using Lookout.Api.Tak;
 using Lookout.Api.Weather;
 using Lookout.Engine.Rules;
 using Lookout.Engine.Spread;
@@ -38,6 +40,8 @@ public sealed class LiveRunner(
     IHubContext<IncidentHub> hub,
     LiveSnapshots snapshots,
     NwsClient nws,
+    CotSender cot,
+    CotSettings cotSettings,
     LiveOptions options,
     BrokerConfig broker,
     TimeProvider clock,
@@ -46,6 +50,7 @@ public sealed class LiveRunner(
     private readonly Dictionary<Guid, IncidentRuntime> _incidents = new();
     private readonly Channel<(string Topic, byte[] Payload)> _inbox = Channel.CreateUnbounded<(string, byte[])>();
     private readonly Dictionary<Guid, DateTimeOffset> _nwsFetched = new();
+    private DateTimeOffset _nextCot;
     private MqttConnection? _mqtt;
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -72,6 +77,7 @@ public sealed class LiveRunner(
                 while (signals.Reader.TryRead(out var s)) await HandleSignalAsync(s, ct);
                 while (_inbox.Reader.TryRead(out var m)) await HandleMessageAsync(m.Topic, m.Payload, ct);
                 foreach (var rt in _incidents.Values.ToList()) await TickAsync(rt, ct);
+                await ExportCotAsync(ct);
             }
             catch (Exception e) when (!ct.IsCancellationRequested)
             {
@@ -263,6 +269,43 @@ public sealed class LiveRunner(
         var frame = LiveFrame.Build(rt, t, now);
         snapshots.Set(rt.Incident.Id, frame);
         await group.SendAsync("frame", frame, ct);
+    }
+
+    /// <summary>Crew positions, fire perimeter and cut-off warnings as CoT, for TAK clients.</summary>
+    private async Task ExportCotAsync(CancellationToken ct)
+    {
+        var now = clock.GetUtcNow();
+        if (now < _nextCot) return;
+        _nextCot = now.AddSeconds(cotSettings.IntervalSec);
+        var all = new List<XElement>();
+        foreach (var rt in _incidents.Values)
+        {
+            var events = new List<XElement>();
+            var id = rt.Incident.Id;
+            for (var i = 0; i < rt.Front.NumGeometries; i++)
+            {
+                if (rt.Front.GetGeometryN(i) is not NetTopologySuite.Geometries.Polygon p || p.IsEmpty) continue;
+                var ring = p.ExteriorRing.Coordinates.Select(c => { var (lon, lat) = rt.Frame.ToLonLat(c); return new[] { lon, lat }; }).ToList();
+                events.Add(CotBuilder.FirePerimeter(id, ring, now));
+            }
+            foreach (var crew in rt.Crews)
+            {
+                if (!rt.Fixes.TryGetValue(crew.CrewId, out var fix)) continue;
+                var (lon, lat) = rt.Frame.ToLonLat(fix.Position);
+                var level = rt.Monitors.TryGetValue(crew.CrewId, out var m) ? m.Reported : AlertLevel.None;
+                rt.LastAssessment.TryGetValue(crew.CrewId, out var a);
+                var summary = a?.Findings.OrderByDescending(f => f.Level).FirstOrDefault()?.Summary;
+                events.Add(CotBuilder.Crew(id, crew.CrewId, lat, lon, level.ToString().ToLowerInvariant(), summary, fix.Battery, now));
+                if (level >= AlertLevel.Warning && a?.Cutoff.CutPoint is { } cut && summary is not null)
+                {
+                    var (cutLon, cutLat) = rt.Frame.ToLonLat(cut);
+                    events.Add(CotBuilder.CutoffWarning(id, crew.CrewId, cutLat, cutLon, level.ToString().ToLowerInvariant(), summary, now));
+                }
+            }
+            snapshots.SetCot(id, events);
+            all.AddRange(events);
+        }
+        if (all.Count > 0) await cot.SendAsync(all, ct);
     }
 
     private void Offer(IncidentRuntime rt, AlertRecord alert, double? leaveByMin)

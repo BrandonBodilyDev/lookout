@@ -7,6 +7,7 @@
     <Project Path="src/Lookout.Sim/Lookout.Sim.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Lookout.Api.Tests/Lookout.Api.Tests.csproj" />
     <Project Path="tests/Lookout.Engine.Tests/Lookout.Engine.Tests.csproj" />
   </Folder>
 </Solution>

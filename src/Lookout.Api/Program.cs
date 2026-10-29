@@ -3,6 +3,7 @@ using Lookout.Api;
 using Lookout.Api.Auth;
 using Lookout.Api.Data;
 using Lookout.Api.Live;
+using Lookout.Api.Tak;
 using Lookout.Api.Weather;
 using Lookout.Link;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -68,6 +69,8 @@ if (live)
     // No broker configured means loopback mode: the engine runs, nothing leaves the server.
     builder.Services.AddSingleton(new BrokerConfig(config.GetSection("Lookout:Mqtt").Get<MqttSettings>() is { Host.Length: > 0 } m ? m : null));
     builder.Services.AddSignalR();
+    builder.Services.AddSingleton(config.GetSection("Lookout:Cot").Get<CotSettings>() ?? new CotSettings());
+    builder.Services.AddSingleton<CotSender>();
     if (config.GetValue("Lookout:Live:Enabled", true)) builder.Services.AddHostedService<LiveRunner>();
 }
 
