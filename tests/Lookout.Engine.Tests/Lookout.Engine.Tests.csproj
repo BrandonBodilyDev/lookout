@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Lookout.Engine\Lookout.Engine.csproj" />
+    <ProjectReference Include="..\..\src\Lookout.Link\Lookout.Link.csproj" />
   </ItemGroup>
 
   <ItemGroup>

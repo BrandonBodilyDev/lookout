@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Lookout.Engine\Lookout.Engine.csproj" />
+    <ProjectReference Include="..\Lookout.Link\Lookout.Link.csproj" />
   </ItemGroup>
 
   <ItemGroup>

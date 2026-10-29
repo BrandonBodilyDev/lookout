@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Lookout.Api/Lookout.Api.csproj" />
     <Project Path="src/Lookout.Engine/Lookout.Engine.csproj" />
+    <Project Path="src/Lookout.Link/Lookout.Link.csproj" />
     <Project Path="src/Lookout.Sim/Lookout.Sim.csproj" />
   </Folder>
   <Folder Name="/tests/">
