@@ -34,7 +34,7 @@ public sealed class LiveOptions
 /// alerts, lets the link governor pick what to transmit, and pushes a frame to dashboards.
 /// Keeping all mutation on this loop is what lets <see cref="IncidentRuntime"/> skip locking.
 /// </summary>
-public sealed class LiveRunner(
+public sealed partial class LiveRunner(
     IServiceScopeFactory scopes,
     ScenarioStore scenarios,
     IncidentSignals signals,
@@ -57,14 +57,7 @@ public sealed class LiveRunner(
         Channel.CreateUnbounded<(string, byte[], IReadOnlyDictionary<string, (Guid Incident, string Crew)>?)>();
     private readonly Dictionary<Guid, DateTimeOffset> _nwsFetched = new();
     private DateTimeOffset _nextCot;
-    /// <summary>Device id to the incident and crew it reports for, from the devices table. Replaced whole, never mutated, so the MQTT thread can read it.</summary>
-    private volatile IReadOnlyDictionary<string, (Guid Incident, string Crew)> _devices = new Dictionary<string, (Guid, string)>();
-    private volatile bool _devicesLoaded;
-    private DateTimeOffset _nextDeviceReload;
     private DateTimeOffset _nextOverrunLog;
-    /// <summary>A safety net: the directory also reloads on every assignment, but a missed signal must not last.</summary>
-    private static readonly TimeSpan DeviceReloadInterval = TimeSpan.FromSeconds(60);
-    private readonly HashSet<string> _unknownDevicesLogged = [];
     private MqttConnection? _mqtt;
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -190,20 +183,6 @@ public sealed class LiveRunner(
         return rt;
     }
 
-    private async Task ReloadDevicesAsync(CancellationToken ct)
-    {
-        await using var scope = scopes.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
-        _devices = (await db.Devices.AsNoTracking().ToListAsync(ct))
-            .ToDictionary(d => d.DeviceId, d => (d.IncidentId, d.CrewId));
-        _devicesLoaded = health.DevicesLoaded = true;
-        _nextDeviceReload = clock.GetUtcNow() + DeviceReloadInterval;
-        _unknownDevicesLogged.Clear();
-    }
-
-    private IEnumerable<string> DevicesOf(Guid incident, string crewId) =>
-        _devices.Where(d => d.Value.Incident == incident && d.Value.Crew == crewId).Select(d => d.Key);
-
     private static async Task ReloadLayoutAsync(IncidentRuntime rt, LookoutDb db, CancellationToken ct)
     {
         var id = rt.Incident.Id;
@@ -237,95 +216,6 @@ public sealed class LiveRunner(
                 break;
             case NwsWindReceived w when _incidents.TryGetValue(s.IncidentId, out var rt4):
                 rt4.UpdateWind(rt4.Wind with { WindFromDeg = w.WindFromDeg ?? rt4.Wind.WindFromDeg, MidflameWindMs = w.MidflameWindMs }, w.Label);
-                break;
-        }
-    }
-
-    private async Task HandleMessageAsync(string topic, byte[] payload, IReadOnlyDictionary<string, (Guid Incident, string Crew)>? devicesAtArrival, CancellationToken ct)
-    {
-        // Crew devices: the registry, not the topic, says which incident and crew a device reports for.
-        if (Topics.ParseDevice(topic) is { Up: true } dev)
-        {
-            activity.Heard(dev.DeviceId, BatteryOf(payload));
-            // Unknown at arrival but assigned since: it belonged to no crew then, so the current owner is safe.
-            if (!(devicesAtArrival ?? _devices).TryGetValue(dev.DeviceId, out var owner) && !_devices.TryGetValue(dev.DeviceId, out owner))
-            {
-                if (_unknownDevicesLogged.Add(dev.DeviceId))
-                    log.LogWarning("Uplink from unregistered device {Device} dropped; assign it to a crew first", dev.DeviceId);
-                return;
-            }
-            var crewRt = _incidents.GetValueOrDefault(owner.Incident) ?? await LoadAsync(owner.Incident, ct);
-            if (crewRt is not null) await HandleUplinkAsync(crewRt, owner.Crew, payload, ct, dev.DeviceId);
-            return;
-        }
-
-        if (Topics.Parse(topic) is not { } t) return;
-        var rt = _incidents.GetValueOrDefault(t.Incident) ?? await LoadAsync(t.Incident, ct);
-        if (rt is null) return;
-
-        switch (t.Path)
-        {
-            case ["drone", "front"]:
-                rt.UpdateFront(SurveyJson.Decode<DroneFrontMessage>(payload));
-                break;
-            case ["wx"]:
-                var wx = SurveyJson.Decode<WeatherMessage>(payload);
-                if (!double.IsFinite(wx.WindFromDeg) || !double.IsFinite(wx.MidflameWindMs) || wx.MidflameWindMs is < 0 or > 60
-                    || !double.IsFinite(wx.HeadRateMPerMin) || wx.HeadRateMPerMin is <= 0 or > 1000)
-                    throw new FormatException($"Weather values out of range: {wx}");
-                if (rt.Incident.WindSource == WindSource.Field)
-                    rt.UpdateWind(new SpreadConditions(((wx.WindFromDeg % 360) + 360) % 360, wx.MidflameWindMs, wx.HeadRateMPerMin), wx.Source);
-                else // NWS mode: keep NWS wind, take only the head-fire rate NWS cannot provide.
-                    rt.UpdateWind(rt.Wind with { HeadRateMPerMin = wx.HeadRateMPerMin }, rt.WindSource);
-                break;
-        }
-    }
-
-    /// <summary>Battery from a position report; null for an ack or a malformed message (handled, and logged, later).</summary>
-    private static int? BatteryOf(byte[] payload)
-    {
-        try { return WireFormat.DecodeUplink(payload) is PositionReport p ? p.BatteryPercent : null; }
-        catch (FormatException) { return null; }
-    }
-
-    private async Task HandleUplinkAsync(IncidentRuntime rt, string crewId, byte[] payload, CancellationToken ct, string? deviceId = null)
-    {
-        if (rt.Crews.All(c => c.CrewId != crewId)) return;
-        await using var scope = scopes.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
-
-        var uplink = WireFormat.DecodeUplink(payload);
-        Telemetry.UplinkMessages.Add(1, new KeyValuePair<string, object?>("kind", uplink is PositionReport ? "position" : "ack"));
-        switch (uplink)
-        {
-            case PositionReport p:
-                // Trust the device clock only up to the server's: one fix stamped in the future would
-                // otherwise make every later fix look older and freeze the crew's position.
-                var received = clock.GetUtcNow();
-                var fixTime = p.Time > received.AddSeconds(5) ? received : p.Time;
-                if (fixTime != p.Time) log.LogWarning("Crew {Crew} fix stamped {Stamp:o} is in the future; using receive time", crewId, p.Time);
-                var scenarioMin = rt.ScenarioMinute(fixTime);
-                var local = rt.Frame.ToLocal(p.Lon, p.Lat);
-                if (!rt.Fixes.TryGetValue(crewId, out var prev) || scenarioMin > prev.ScenarioMin)
-                    rt.Fixes[crewId] = (scenarioMin, local, p.BatteryPercent);
-                db.CrewFixes.Add(new CrewFix
-                {
-                    Time = fixTime, IncidentId = rt.Incident.Id, CrewId = crewId,
-                    Position = new NetTopologySuite.Geometries.Point(p.Lon, p.Lat) { SRID = 4326 },
-                    ScenarioMin = scenarioMin, Bytes = payload.Length,
-                });
-                try { await db.SaveChangesAsync(ct); }
-                catch (DbUpdateException) { /* duplicate delivery of the same fix (QoS 1): already stored */ }
-                break;
-
-            case AckReport a:
-                var alerts = scope.ServiceProvider.GetRequiredService<AlertService>();
-                var acked = await alerts.AcknowledgeFromDeviceAsync(rt.Incident.Id, crewId, a.AlertSequence, ct, deviceId);
-                if (acked is not null)
-                {
-                    rt.Governor.Clear(crewId, acked.Id);
-                    await hub.Clients.Group(rt.Incident.Id.ToString()).SendAsync("alert", AlertDto.From(acked), ct);
-                }
                 break;
         }
     }
@@ -459,43 +349,6 @@ public sealed class LiveRunner(
         await group.SendAsync("frame", frame, ct);
     }
 
-    /// <summary>Crew positions, fire perimeter and cut-off warnings as CoT, for TAK clients.</summary>
-    private async Task ExportCotAsync(CancellationToken ct)
-    {
-        var now = clock.GetUtcNow();
-        if (now < _nextCot) return;
-        _nextCot = now.AddSeconds(cotSettings.IntervalSec);
-        var all = new List<XElement>();
-        foreach (var rt in _incidents.Values)
-        {
-            var events = new List<XElement>();
-            var id = rt.Incident.Id;
-            for (var i = 0; i < rt.Front.NumGeometries; i++)
-            {
-                if (rt.Front.GetGeometryN(i) is not NetTopologySuite.Geometries.Polygon p || p.IsEmpty) continue;
-                var ring = p.ExteriorRing.Coordinates.Select(c => { var (lon, lat) = rt.Frame.ToLonLat(c); return new[] { lon, lat }; }).ToList();
-                events.Add(CotBuilder.FirePerimeter(id, ring, now));
-            }
-            foreach (var crew in rt.Crews)
-            {
-                if (!rt.Fixes.TryGetValue(crew.CrewId, out var fix)) continue;
-                var (lon, lat) = rt.Frame.ToLonLat(fix.Position);
-                var level = rt.Monitors.TryGetValue(crew.CrewId, out var m) ? m.Reported : AlertLevel.None;
-                rt.LastAssessment.TryGetValue(crew.CrewId, out var a);
-                var summary = a?.Findings.OrderByDescending(f => f.Level).FirstOrDefault()?.Summary;
-                events.Add(CotBuilder.Crew(id, crew.CrewId, lat, lon, level.ToString().ToLowerInvariant(), summary, fix.Battery >= 0 ? fix.Battery : null, now));
-                if (level >= AlertLevel.Warning && a?.Cutoff.CutPoint is { } cut && summary is not null)
-                {
-                    var (cutLon, cutLat) = rt.Frame.ToLonLat(cut);
-                    events.Add(CotBuilder.CutoffWarning(id, crew.CrewId, cutLat, cutLon, level.ToString().ToLowerInvariant(), summary, now));
-                }
-            }
-            snapshots.SetCot(id, events);
-            all.AddRange(events);
-        }
-        if (all.Count > 0) await cot.SendAsync(all, ct);
-    }
-
     private void Offer(IncidentRuntime rt, AlertRecord alert, double? leaveByMin)
     {
         if (alert.State is not (Engine.Workflow.AlertState.Queued or Engine.Workflow.AlertState.Sent or Engine.Workflow.AlertState.Escalated)) return;
@@ -507,31 +360,6 @@ public sealed class LiveRunner(
         }
         var payload = WireFormat.EncodeAlert(new AlertMessage((ushort)alert.LinkSeq, (byte)alert.Level, leaveBy, alert.Text));
         rt.Governor.Offer(alert.CrewId, alert.Id, (int)alert.Level, payload, alert.RequiresAck);
-    }
-
-    /// <summary>
-    /// Starts an NWS fetch off the loop (it can take tens of seconds when NWS is slow); the result
-    /// comes back as a signal and is applied on the loop.
-    /// </summary>
-    private Task RefreshNwsAsync(IncidentRuntime rt, DateTimeOffset now, CancellationToken ct)
-    {
-        if (_nwsFetched.TryGetValue(rt.Incident.Id, out var last) && now - last < TimeSpan.FromMinutes(10)) return Task.CompletedTask;
-        _nwsFetched[rt.Incident.Id] = now;
-        var (id, lat, lon) = (rt.Incident.Id, rt.Frame.OriginLat, rt.Frame.OriginLon);
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var w = await nws.GetAsync(lat, lon, ct);
-                if (w.WindKmh is { } kmh)
-                    signals.Post(new NwsWindReceived(id, w.WindFromDeg, NwsClient.MidflameMs(kmh), $"NWS {w.Station} {w.ObservedAt:HH:mm}Z"));
-            }
-            catch (Exception e) when (!ct.IsCancellationRequested)
-            {
-                log.LogWarning("NWS fetch failed for incident {Id}: {Error}; keeping last wind", id, e.Message);
-            }
-        }, ct);
-        return Task.CompletedTask;
     }
 
     private async Task CloseAsync(IncidentRuntime rt, CancellationToken ct)
