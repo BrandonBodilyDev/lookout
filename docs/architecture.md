@@ -22,7 +22,7 @@ Short records of the choices that shape Lookout, why they were made, and what th
 
 **Decision.** Fire travel time uses Dijkstra over a 30 m grid with 16 neighbours, as in FlamMap MTT. For alerts, one reverse search runs from the crew's remaining route, seeded with minus the crew's arrival time at each route point.
 
-**Why.** A single search gives the margin from wherever the front is, and also the leave-now zone to draw. The search stops once margins exceed anything that could change the alert level. The whole 45-minute demo replay, 91 ticks for two crews plus the true fire, runs in about 4 seconds on a laptop, process start included.
+**Why.** A single search gives the margin from wherever the front is, and also the leave-now zone to draw. The search stops once margins exceed anything that could change the alert level. Measured with the engine's own telemetry in the live stack: about 20 ms per incident tick at the median, for two crews and three routes. The whole 45-minute demo replay, 91 ticks plus the true fire, runs in about 4 seconds on a laptop, process start included.
 
 **Cost.** Grid direction bias is a few percent, which a test bounds against the closed-form ellipse. Spread inside one weather phase uses constant conditions.
 
