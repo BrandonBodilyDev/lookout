@@ -284,6 +284,7 @@ The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add
 | `deploy/mosquitto` | Broker configuration with a development password file. |
 | `docs/assumptions.md` | Every default parameter, its source, and the open questions for a working firefighter. |
 | `docs/architecture.md` | Design decisions: what was chosen, why, and what it costs. |
+| `docs/drone-runbook.md` | How to run the drone pipeline on real footage: subtitle tracks, FOV calibration, public datasets, trained detectors. |
 
 ## Roadmap
 
