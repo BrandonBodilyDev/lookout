@@ -8,16 +8,18 @@ The name comes from LCES (Lookouts, Communications, Escape routes, Safety zones)
 
 ![Replay of the demo scenario: the wind shifts at 14:20, Crew Alpha is told to leave, and walks to the safety zone before the fire reaches their route](docs/images/replay.gif)
 
-> **Status: Phase 1 done, Phase 2 built and tested on synthetic footage.** This is a portfolio project. It runs scripted scenarios on real terrain, live or as a replay, and its drone pipeline has not yet been run on real fire footage. It is not a validated fire behavior model and must not be used for real operational decisions.
+> **Status: Phases 1 and 2 built, Phase 3 started.** The drone pipeline is tested on synthetic footage only. This is a portfolio project. It runs scripted scenarios on real terrain, live or as a replay, and its drone pipeline has not yet been run on real fire footage. It is not a validated fire behavior model and must not be used for real operational decisions.
 
 ## What it does
 
 - **Predicts when the fire reaches each point of a crew's escape route,** over real terrain, using the minimum-travel-time method that FlamMap uses, with elliptical spread from the wind observed now.
 - **Predicts when the crew reaches each point,** walking at slope-adjusted rates measured from GPS-tracked hotshot crews.
 - **Turns the gap into a decision:** a must-leave-by time, a safety margin, an alert level, and a "leave-now zone" on the map. If the fire front enters that zone, the crew must already be moving.
+- **Weighs every escape route:** works from whichever route still clears and tells the crew which to avoid.
 - **Watches the link:** if a crew's GPS fixes stop arriving, it flags the stale position and escalates to the incident commander.
 - **Delivers warnings over a constrained link:** 16-byte position reports up, alerts of at most 270 bytes down, spaced like satellite modem sessions and repeated until acknowledged.
 - **Runs the acknowledgement workflow** with roles, optimistic concurrency, escalation, and an audit trail the database refuses to rewrite.
+- **Reaches the crew's phone:** a mobile view with one-tap acknowledgement, optional phone GPS, and Web Push for a closed page.
 - **Exports to TAK:** crew positions, the fire perimeter, and cut-off markers as Cursor on Target events.
 
 ## The demo scenario
@@ -56,7 +58,7 @@ The demo scenario is also the acceptance test. [`DemoScenarioTests`](tests/Looko
 
 The same scenario can run live. A field simulator plays it in over MQTT the way the field would: crew GPS fixes, drone surveys of the burned area, and weather. The engine watches it in real time, sends alerts down each crew's link, and the incident commander works the dashboard.
 
-![The live dashboard as incident commander: alert states, acknowledge and cancel actions, and the audit trail](docs/images/live-ic.png)
+![The live dashboard as incident commander at 14:21: the fire front comes from a virtual survey camera and the colour detector; Alpha's CRITICAL, with "Avoid ER-1B", was acknowledged by the crew's device; Bravo's COMMS LOST warning took three sends to get through](docs/images/live-ic.png)
 
 During the live run of the demo:
 
@@ -208,9 +210,9 @@ stateDiagram-v2
 - **Every transition is listed in one place,** [`AlertStateMachine.cs`](src/Lookout.Engine/Workflow/AlertStateMachine.cs). Anything not listed is refused with HTTP 409.
 - **Optimistic concurrency.** Alerts, routes and safety zones carry PostgreSQL's `xmin` as a row version. A client must send the version it saw. A stale version gets a 409 with the current state, and two simultaneous acknowledgements resolve to exactly one success.
 - **Roles.** The incident commander can start incidents, acknowledge for any crew, cancel with a reason, and redraw routes and safety zones. A crew device can acknowledge only its own alerts. An observer can only watch.
-- **Audit.** Each alert change and its audit event are saved in one transaction. The audit table is a TimescaleDB hypertable, and a database trigger rejects UPDATE, DELETE and TRUNCATE.
+- **Audit.** Each alert change and its audit event are saved in one transaction. The audit table is a TimescaleDB hypertable, and a database trigger rejects UPDATE, DELETE and TRUNCATE. The API also connects as a restricted role that may only insert into and read the audit table; migrations run as the owner.
 
-Sign-in uses development tokens issued by the API. A real deployment would use the organisation's identity provider instead.
+Sign-in uses development tokens issued by the API; a real deployment would use the organisation's identity provider. Crew tokens are valid for one incident only. On the broker, the server and the field simulator have separate accounts, and access rules let a crew device use only its own topics.
 
 ### Data model
 
@@ -222,9 +224,10 @@ Sign-in uses development tokens issued by the API. A real deployment would use t
 | `safety_zones` | PostGIS `Polygon`, versioned |
 | `alerts` | Each alert, its link sequence, state, and acknowledgement, versioned |
 | `audit_events` | Append-only hypertable: who did what, when, with JSON details |
-| `crew_fixes` | Hypertable of every position received over the link |
+| `crew_fixes` | Hypertable of every position received over the link, compressed after 7 days, kept 90 |
+| `push_subscriptions` | Crew phones registered for Web Push, per incident and crew |
 
-Migrations are EF Core, with one hand-written migration for the hypertables and the append-only trigger.
+Migrations are EF Core. Hand-written SQL in them creates the hypertables, the append-only trigger, the compression and retention policies, and the runtime role's grants.
 
 ## What Lookout does not model
 
@@ -242,6 +245,7 @@ docker compose up --build
 ```
 
 - **Replay:** open http://localhost:8080. It works without signing in.
+- **Ports are bound to localhost,** because development sign-in is on: anyone who can reach the dashboard can get an incident-commander token.
 - **Live:** switch to Live and sign in as incident commander. The `field` service has already started an incident at 4× real time and is playing the demo scenario into it.
 
 For development you need .NET 10, Node 22 or later, and Docker for PostgreSQL, Mosquitto and the integration tests.
@@ -288,11 +292,13 @@ The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add
 | `src/Lookout.Api` | ASP.NET Core: replay API, live runner, alert and incident services, EF Core data model, SignalR hub, NWS client, CoT export. |
 | `src/Lookout.Field` | Field simulator: plays a scenario's truth over MQTT and simulates crew devices. |
 | `src/Lookout.Sim` | Console runner for replays (add `--camera` to put the drone pipeline in the loop), the `drone` commands, and the `dem` command that builds a scenario's terrain grid. |
-| `tests/Lookout.Engine.Tests` | Formulas, grid oracles, travel rates, latch, state machine, wire formats, governor, demo acceptance. |
-| `tests/Lookout.Api.Tests` | Integration tests on a TimescaleDB container, plus CoT and NWS parsing. |
-| `web` | Vite + React + TypeScript dashboard on MapLibre GL JS, with Replay and Live modes. |
+| `tests/Lookout.Engine.Tests` | Formulas, grid oracles, travel rates, latch, state machine, wire formats, governor, demo and control scenarios, drone pipeline, ONNX path. |
+| `tests/Lookout.Api.Tests` | Integration tests on a TimescaleDB container, run as the restricted runtime role: workflow, concurrency, roles, audit, Web Push against a fake push service, MQTT reconnects against a real broker, TAK sender. |
+| `web` | Vite + React + TypeScript dashboard on MapLibre GL JS, with Replay, Live and Crew views. |
 | `scenarios` | Scenario YAML files and their terrain grids. |
-| `deploy/mosquitto` | Broker configuration with a development password file. |
+| `deploy/mosquitto` | Broker configuration, access rules, and a development password file. |
+| `deploy/postgres` | Database init script that creates the API's restricted runtime login. |
+| `tools` | Generator for the tiny ONNX test model. |
 | `docs/assumptions.md` | Every default parameter, its source, and the open questions for a working firefighter. |
 | `docs/architecture.md` | Design decisions: what was chosen, why, and what it costs. |
 | `docs/drone-runbook.md` | How to run the drone pipeline on real footage: subtitle tracks, FOV calibration, public datasets, trained detectors. |
