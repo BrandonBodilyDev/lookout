@@ -26,6 +26,8 @@ builder.Services.AddSingleton(new ScenarioStore(ScenarioStore.Resolve(config["Lo
 // still serves scenario replays, which is all Phase 0 needed.
 var connection = config.GetConnectionString("Lookout");
 var live = !string.IsNullOrWhiteSpace(connection);
+// The live runner can be switched off (integration tests drive the services directly).
+var runner = live && config.GetValue("Lookout:Live:Enabled", true);
 var devAuth = config.GetValue("Lookout:DevAuth", false);
 
 var jwt = config.GetSection("Lookout:Jwt").Get<JwtSettings>() ?? new JwtSettings();
@@ -86,6 +88,7 @@ if (live)
     builder.Services.AddSingleton<IncidentSignals>();
     builder.Services.AddSingleton<LiveSnapshots>();
     builder.Services.AddSingleton<DeviceActivity>();
+    builder.Services.AddSingleton<LiveHealth>();
     builder.Services.AddSingleton(config.GetSection("Lookout:Live").Get<LiveOptions>() ?? new LiveOptions());
     // No broker configured means loopback mode: the engine runs, nothing leaves the server.
     builder.Services.AddSingleton(new BrokerConfig(config.GetSection("Lookout:Mqtt").Get<MqttSettings>() is { Host.Length: > 0 } m ? m : null));
@@ -95,7 +98,7 @@ if (live)
     builder.Services.AddSingleton(config.GetSection("Lookout:WebPush").Get<Lookout.Api.Push.WebPushSettings>() ?? new Lookout.Api.Push.WebPushSettings());
     builder.Services.AddHttpClient(nameof(Lookout.Api.Push.PushNotifier), c => c.Timeout = TimeSpan.FromSeconds(10));
     builder.Services.AddSingleton<Lookout.Api.Push.PushNotifier>();
-    if (config.GetValue("Lookout:Live:Enabled", true)) builder.Services.AddHostedService<LiveRunner>();
+    if (runner) builder.Services.AddHostedService<LiveRunner>();
 }
 
 var app = builder.Build();
@@ -122,7 +125,16 @@ if (live && config.GetValue("Lookout:MigrateOnStartup", true))
     }
 }
 
+// Liveness: the process answers. Readiness: it can actually warn crews (database, live loop, broker, devices).
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", live, devAuth }));
+app.MapGet("/api/health/ready", async (IServiceProvider sp, TimeProvider clock, CancellationToken ct) =>
+{
+    var checks = new List<LiveHealth.Check>();
+    if (live) checks.Add(await LiveHealth.DatabaseCheckAsync(sp, ct));
+    if (runner) checks.AddRange(sp.GetRequiredService<LiveHealth>().Evaluate(clock.GetUtcNow(), sp.GetRequiredService<LiveOptions>()));
+    var ready = checks.All(c => c.Ok);
+    return Results.Json(new { status = ready ? "ready" : "not ready", checks }, statusCode: ready ? 200 : 503);
+});
 
 app.MapGet("/api/scenarios", (ScenarioStore store) =>
     store.List().Select(s => new { s.Id, s.Name, s.Description, s.Start, s.DurationMin }));

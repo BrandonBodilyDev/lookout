@@ -103,7 +103,8 @@ Metrics come from OpenTelemetry (see `docker-compose.observability.yml`). Sugges
 | `lookout.link.uplink.messages` | zero for 5 minutes while an incident runs | No crew fixes are arriving: link or field problem. |
 | `lookout.alerts.escalated` | any | A crew did not acknowledge a warning; the IC must act. This is an operational alert, not just a technical one. |
 | `lookout.alerts.ack.latency` p90 | above 2 minutes | Warnings are reaching crews slowly or being missed. |
-| `/api/health` | failing | API down. |
+| `/api/health` | failing | API down. Liveness only: the process answers. |
+| `/api/health/ready` | 503 for 1 minute | The API cannot warn crews: database unreachable, live loop stalled for 10 s or more, broker disconnected, or device directory not loaded. The body names the failing check. Use it for paging and readiness, not restarts: restarting the API fixes neither a broker nor a database outage, so the compose healthcheck stays on liveness. |
 | Runner errors in the log (`Live runner: ... failed; continuing`) | any burst | One incident, message or export is failing repeatedly. |
 
 ## When a dependency fails

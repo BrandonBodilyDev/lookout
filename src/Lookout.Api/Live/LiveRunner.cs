@@ -41,6 +41,7 @@ public sealed class LiveRunner(
     IHubContext<IncidentHub> hub,
     LiveSnapshots snapshots,
     DeviceActivity activity,
+    LiveHealth health,
     NwsClient nws,
     CotSender cot,
     Push.PushNotifier push,
@@ -77,6 +78,7 @@ public sealed class LiveRunner(
                 // pass must not credit this message (a fix, or an ack by link sequence) to the new crew.
                 OnMessage = (topic, payload) => { _inbox.Writer.TryWrite((topic, payload, _devicesLoaded ? _devices : null)); return Task.CompletedTask; },
             };
+            health.BrokerConnected = () => _mqtt.IsConnected;
             await _mqtt.StartAsync([Topics.AllDeviceUplinks, Topics.AllDroneFronts, Topics.AllWeather], ct);
         }
         else
@@ -95,6 +97,7 @@ public sealed class LiveRunner(
             while (_inbox.Reader.TryRead(out var m)) await Guard($"message on {m.Topic}", () => HandleMessageAsync(m.Topic, m.Payload, m.Devices, ct), ct);
             foreach (var rt in _incidents.Values.ToList()) await Guard($"tick of incident {rt.Incident.Id}", () => TickAsync(rt, ct), ct);
             await Guard("CoT export", () => ExportCotAsync(ct), ct);
+            health.Ticked(clock.GetUtcNow());
         }
         while (await timer.WaitForNextTickAsync(ct));
     }
@@ -176,7 +179,7 @@ public sealed class LiveRunner(
         var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
         _devices = (await db.Devices.AsNoTracking().ToListAsync(ct))
             .ToDictionary(d => d.DeviceId, d => (d.IncidentId, d.CrewId));
-        _devicesLoaded = true;
+        _devicesLoaded = health.DevicesLoaded = true;
         _nextDeviceReload = clock.GetUtcNow() + DeviceReloadInterval;
         _unknownDevicesLogged.Clear();
     }
