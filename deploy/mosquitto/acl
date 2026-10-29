@@ -1,0 +1,20 @@
+# Who may publish and subscribe to what. Anything not granted here is denied.
+
+# The Lookout server: reads every uplink, drone survey and weather message; writes every downlink.
+user lookout
+topic read lookout/+/crew/+/up
+topic read lookout/+/drone/front
+topic read lookout/+/wx
+topic write lookout/+/crew/+/down
+
+# The field simulator plays every crew device, the drone and the weather station at once.
+user field
+topic write lookout/+/crew/+/up
+topic read lookout/+/crew/+/down
+topic write lookout/+/drone/front
+topic write lookout/+/wx
+
+# A real crew device would log in as its own user, named after its crew (for example ALPHA),
+# and could only send on its own uplink and hear its own downlink. %u is the username.
+pattern write lookout/+/crew/%u/up
+pattern read lookout/+/crew/%u/down

@@ -9,7 +9,7 @@ namespace Lookout.Api.Live;
 
 public static class LiveEndpoints
 {
-    public sealed record TokenRequest(string Role, string? Name, string? CrewId);
+    public sealed record TokenRequest(string Role, string? Name, string? CrewId, Guid? IncidentId);
     public sealed record CreateIncident(string ScenarioId, double ClockRate = 1, string? WindSource = null);
     public sealed record VersionedAction(uint Version, string? Reason);
     public sealed record PutRoute(string Name, string SafetyZone, double[][] Path, uint? Version);
@@ -23,11 +23,16 @@ public static class LiveEndpoints
             // Development sign-in: pick a role, get a token. Production would use Entra ID / OIDC instead.
             app.MapPost("/api/dev/token", (TokenRequest r, DevTokenIssuer issuer) =>
                 !Roles.All.Contains(r.Role) ? Results.BadRequest(new { error = $"role must be one of {string.Join(", ", Roles.All)}" })
-                : r.Role == Roles.Crew && string.IsNullOrWhiteSpace(r.CrewId) ? Results.BadRequest(new { error = "crew tokens need a crewId" })
-                : Results.Ok(new { token = issuer.Issue(r.Name ?? $"{r.Role}-{r.CrewId ?? "user"}".ToLowerInvariant(), r.Role, r.CrewId?.ToUpperInvariant()) }));
+                : r.Role == Roles.Crew && (string.IsNullOrWhiteSpace(r.CrewId) || r.IncidentId is null)
+                    ? Results.BadRequest(new { error = "crew tokens need a crewId and an incidentId" })
+                : Results.Ok(new
+                {
+                    token = issuer.Issue(r.Name ?? $"{r.Role}-{r.CrewId ?? "user"}".ToLowerInvariant(), r.Role,
+                        r.Role == Roles.Crew ? r.CrewId!.ToUpperInvariant() : null, r.Role == Roles.Crew ? r.IncidentId : null),
+                }));
         }
 
-        var api = app.MapGroup("/api/incidents").AddEndpointFilter<ProblemFilter>();
+        var api = app.MapGroup("/api/incidents").AddEndpointFilter<ProblemFilter>().AddEndpointFilter<CrewIncidentScope>();
 
         api.MapPost("/", async (CreateIncident r, IncidentService svc, IncidentSignals signals, HttpContext http, CancellationToken ct) =>
         {
@@ -37,11 +42,15 @@ public static class LiveEndpoints
             return Results.Created($"/api/incidents/{incident.Id}", new { incident.Id, incident.Name, incident.StartedAt, incident.ClockRate });
         }).RequireAuthorization(Policies.Command);
 
-        api.MapGet("/", async (LookoutDb db, CancellationToken ct) =>
-            await db.Incidents.AsNoTracking().OrderByDescending(i => i.CreatedAt)
+        api.MapGet("/", async (LookoutDb db, HttpContext http, CancellationToken ct) =>
+        {
+            var actor = Actor.From(http.User);
+            var q = db.Incidents.AsNoTracking();
+            if (actor.Role == Roles.Crew) q = q.Where(i => i.Id == actor.IncidentId);
+            return await q.OrderByDescending(i => i.CreatedAt)
                 .Select(i => new { i.Id, i.ScenarioId, i.Name, i.StartedAt, i.ClockRate, Status = i.Status.ToString().ToLower(), WindSource = i.WindSource.ToString().ToLower() })
-                .ToListAsync(ct))
-            .RequireAuthorization(Policies.Read);
+                .ToListAsync(ct);
+        }).RequireAuthorization(Policies.Read);
 
         api.MapGet("/{id:guid}", async (Guid id, LookoutDb db, CancellationToken ct) =>
         {
@@ -149,6 +158,19 @@ public static class LiveEndpoints
         var dto = AlertDto.From(alert);
         await hub.Clients.Group(incidentId.ToString()).SendAsync("alert", dto, ct);
         return dto;
+    }
+
+    /// <summary>Refuses a crew token on any endpoint for an incident other than the one it was issued for.</summary>
+    private sealed class CrewIncidentScope : IEndpointFilter
+    {
+        public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+        {
+            var http = context.HttpContext;
+            if (http.Request.RouteValues.TryGetValue("id", out var raw) && Guid.TryParse(raw?.ToString(), out var id)
+                && !Actor.From(http.User).MayAccessIncident(id))
+                return Results.Problem("This crew token is for a different incident.", statusCode: StatusCodes.Status403Forbidden);
+            return await next(context);
+        }
     }
 
     /// <summary>Maps domain exceptions to RFC 9457 problem responses; conflicts include the current state.</summary>

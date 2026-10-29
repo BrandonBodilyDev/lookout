@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Lookout.Api\Lookout.Api.csproj" />
+    <ProjectReference Include="..\..\src\Lookout.Link\Lookout.Link.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

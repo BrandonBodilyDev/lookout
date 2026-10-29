@@ -20,6 +20,12 @@ public sealed class CrewMonitor(string crewId, AlertSettings settings, SpreadGri
     public string CrewId { get; } = crewId;
     public AlertLevel Reported => _latch.Reported;
 
+    /// <summary>The alert for <paramref name="change"/> could not be recorded: forget it so the next call raises it again.</summary>
+    public void Revert(AlertChange change) => _latch.Reset(change.From);
+
+    /// <summary>After a restart: carry on from the level last sent to the crew instead of from None.</summary>
+    public void Seed(AlertLevel lastReported) => _latch.Reset(lastReported);
+
     /// <param name="clock">Formats a scenario minute as local time, e.g. "14:28".</param>
     public CrewAssessment Assess(
         RouteProfile profile, SafetyZone zone, Coordinate known, double? fixMin,

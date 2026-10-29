@@ -30,7 +30,7 @@ public static class LiveFrame
                     Id = c.CrewId,
                     Known = hasFix ? GeoDto.Point(f, fix.Position) : null,
                     FixAgeMin = hasFix ? Math.Round(t - fix.ScenarioMin, 1) : (double?)null,
-                    Battery = hasFix ? fix.Battery : (int?)null,
+                    Battery = hasFix && fix.Battery >= 0 ? fix.Battery : (int?)null,
                     EnRoute = a?.EnRoute ?? false,
                     Level = level.ToString().ToLowerInvariant(),
                     RawLevel = (a?.RawLevel ?? AlertLevel.None).ToString().ToLowerInvariant(),

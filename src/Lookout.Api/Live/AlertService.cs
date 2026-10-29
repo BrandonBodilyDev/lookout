@@ -17,18 +17,41 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
     /// <summary>Warnings and critical alerts must be acknowledged; watch and all-clear messages are informational.</summary>
     public static bool NeedsAck(AlertLevel level) => level >= AlertLevel.Warning;
 
-    /// <summary>Queue a new alert for a crew, superseding any of its alerts still open.</summary>
-    public async Task<AlertRecord> RaiseAsync(Guid incidentId, string crewId, AlertLevel level, string text, int bytes, double scenarioMin, CancellationToken ct = default)
+    /// <summary>
+    /// Queue a new alert for a crew, superseding any of its alerts still open. If an open alert is
+    /// acknowledged at the same moment, the row version check fails; the whole raise is retried on
+    /// fresh data so the new alert is never lost to that race.
+    /// </summary>
+    public async Task<RaiseResult> RaiseAsync(Guid incidentId, string crewId, AlertLevel level, string text, double scenarioMin, CancellationToken ct = default)
     {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await RaiseOnceAsync(incidentId, crewId, level, text, scenarioMin, ct);
+            }
+            catch (DbUpdateException) when (attempt < 3)
+            {
+                db.ChangeTracker.Clear();
+            }
+        }
+    }
+
+    private async Task<RaiseResult> RaiseOnceAsync(Guid incidentId, string crewId, AlertLevel level, string text, double scenarioMin, CancellationToken ct)
+    {
+        // The text column and the downlink both have limits; never let an over-long id or summary fail the raise.
+        text = System.Text.Encoding.UTF8.GetString(Link.WireFormat.Truncate(text, Link.WireFormat.MaxAlertTextBytes));
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(text);
         var now = clock.GetUtcNow();
         var lastSeq = await db.Alerts.Where(a => a.IncidentId == incidentId && a.CrewId == crewId)
             .MaxAsync(a => (int?)a.LinkSeq, ct) ?? 0;
+        // LinkSeq never wraps in the database; the 16-bit wire field carries it modulo 65536.
         var alert = new AlertRecord
         {
             Id = Guid.CreateVersion7(),
             IncidentId = incidentId,
             CrewId = crewId,
-            LinkSeq = lastSeq % ushort.MaxValue + 1,
+            LinkSeq = lastSeq + 1,
             Level = level,
             RequiresAck = NeedsAck(level),
             Text = text,
@@ -50,7 +73,7 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
         db.Alerts.Add(alert);
         Audit(alert, "alert.raised", Actor.Engine, now, new { level = level.ToString(), text, bytes, scenarioMin });
         await db.SaveChangesAsync(ct);
-        return alert;
+        return new RaiseResult(alert, open);
     }
 
     /// <summary>The link governor published the alert on the crew's downlink.</summary>
@@ -74,8 +97,8 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
     public async Task<AlertRecord> AcknowledgeAsync(Guid incidentId, Guid alertId, uint expectedVersion, Actor actor, CancellationToken ct = default)
     {
         var alert = await Load(incidentId, alertId, ct);
-        if (actor.Role == Roles.Crew && actor.CrewId != alert.CrewId)
-            throw new ForbiddenActionException($"Crew {actor.CrewId} cannot acknowledge an alert for crew {alert.CrewId}.");
+        if (actor.Role == Roles.Crew && (actor.CrewId != alert.CrewId || actor.IncidentId != incidentId))
+            throw new ForbiddenActionException($"Crew {actor.CrewId} cannot acknowledge an alert for crew {alert.CrewId} in this incident.");
         CheckVersion(alert, expectedVersion);
 
         var now = clock.GetUtcNow();
@@ -92,7 +115,10 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
     /// </summary>
     public async Task<AlertRecord?> AcknowledgeFromDeviceAsync(Guid incidentId, string crewId, int linkSeq, CancellationToken ct = default)
     {
-        var alert = await db.Alerts.SingleOrDefaultAsync(a => a.IncidentId == incidentId && a.CrewId == crewId && a.LinkSeq == linkSeq, ct);
+        var alert = await db.Alerts
+            .Where(a => a.IncidentId == incidentId && a.CrewId == crewId && a.LinkSeq % 65536 == linkSeq % 65536)
+            .OrderByDescending(a => a.LinkSeq)
+            .FirstOrDefaultAsync(ct);
         var device = new Actor($"device-{crewId.ToLowerInvariant()}", Roles.Crew, crewId);
         var now = clock.GetUtcNow();
         if (alert is null) return null;
@@ -186,6 +212,9 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
             Details = JsonSerializer.SerializeToDocument(details),
         });
 }
+
+/// <param name="Superseded">Open alerts this one replaced; dashboards need to hear about them too.</param>
+public sealed record RaiseResult(AlertRecord Alert, IReadOnlyList<AlertRecord> Superseded);
 
 public sealed record AlertDto(
     Guid Id, string CrewId, int LinkSeq, string Level, string State, bool RequiresAck, string Text, int Bytes, double ScenarioMin,

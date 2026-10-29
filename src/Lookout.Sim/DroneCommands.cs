@@ -153,6 +153,7 @@ public static class DroneCommands
         }, "lookout-drone-survey", Console.WriteLine);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await mqtt.StartAsync([], cts.Token);
+        await mqtt.WaitConnectedAsync(cts.Token);
         await mqtt.PublishAsync(Topics.DroneFront(incident),
             SurveyJson.Encode(new DroneFrontMessage(DateTimeOffset.UtcNow, MultiPolygon(frame, front), $"drone survey ({source})")), cts.Token);
     }

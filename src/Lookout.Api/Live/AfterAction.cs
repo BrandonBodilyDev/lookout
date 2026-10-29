@@ -17,8 +17,14 @@ public static class AfterAction
         var fixes = await db.CrewFixes.AsNoTracking().Where(f => f.IncidentId == incidentId)
             .Select(f => new { f.CrewId, f.ScenarioMin, f.Bytes }).ToListAsync(ct);
         var crews = await db.Crews.AsNoTracking().Where(c => c.IncidentId == incidentId).OrderBy(c => c.CrewId).ToListAsync(ct);
-        var deviceAcks = await db.AuditEvents.AsNoTracking()
-            .CountAsync(e => e.IncidentId == incidentId && e.Type == "alert.acknowledged" && e.Role == "crew", ct);
+        // Who acknowledged comes from the audit trail's recorded role and actor, not from names:
+        // "ic" is the incident commander; "device-*" acks arrived over the satellite uplink; any
+        // other crew actor is a phone acknowledging over HTTPS.
+        var ackEvents = await db.AuditEvents.AsNoTracking()
+            .Where(e => e.IncidentId == incidentId && e.Type == "alert.acknowledged")
+            .Select(e => new { e.AlertId, e.Role, e.Actor }).ToListAsync(ct);
+        var icAcked = ackEvents.Where(e => e.Role == "ic").Select(e => e.AlertId).ToHashSet();
+        var deviceAcks = ackEvents.Count(e => e.Actor.StartsWith("device-", StringComparison.Ordinal));
 
         double ToScenario(TimeSpan real) => real.TotalMinutes * incident.ClockRate;
 
@@ -43,7 +49,7 @@ public static class AfterAction
                     AlertsByLevel = mine.GroupBy(a => a.Level.ToString().ToLowerInvariant()).ToDictionary(g => g.Key, g => g.Count()),
                     WarningsSent = needAck.Count,
                     Acknowledged = acked.Count,
-                    AcknowledgedByIc = acked.Count(a => a.AcknowledgedBy is { } by && !by.StartsWith("device-", StringComparison.Ordinal)),
+                    AcknowledgedByIc = acked.Count(a => icAcked.Contains(a.Id)),
                     Escalated = mine.Count(a => a.EscalatedAt is not null),
                     MedianAckScenarioMin = ackMinutes.Count == 0 ? (double?)null : Math.Round(ackMinutes[ackMinutes.Count / 2], 2),
                     MaxAckScenarioMin = ackMinutes.Count == 0 ? (double?)null : Math.Round(ackMinutes[^1], 2),

@@ -9,6 +9,10 @@ using Lookout.Link;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
@@ -56,6 +60,22 @@ builder.Services.AddAuthorizationBuilder()
     .AddPolicy(Policies.Field, p => p.RequireRole(Roles.IncidentCommander, Roles.Crew))
     .AddPolicy(Policies.Read, p => p.RequireRole(Roles.All));
 
+// Traces and metrics. Exported over OTLP only when OTEL_EXPORTER_OTLP_ENDPOINT is set
+// (see docker-compose.observability.yml); otherwise they cost almost nothing.
+var otlp = !string.IsNullOrWhiteSpace(config["OTEL_EXPORTER_OTLP_ENDPOINT"]);
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService(config["OTEL_SERVICE_NAME"] ?? "lookout-api"))
+    .WithTracing(t =>
+    {
+        t.AddSource(Telemetry.Name).AddAspNetCoreInstrumentation().AddNpgsql();
+        if (otlp) t.AddOtlpExporter();
+    })
+    .WithMetrics(m =>
+    {
+        m.AddMeter(Telemetry.Name).AddAspNetCoreInstrumentation().AddRuntimeInstrumentation();
+        if (otlp) m.AddOtlpExporter();
+    });
+
 builder.Services.AddHttpClient<NwsClient>(c => c.Timeout = TimeSpan.FromSeconds(15));
 
 if (live)
@@ -75,13 +95,27 @@ if (live)
 }
 
 var app = builder.Build();
+if (devAuth && !app.Environment.IsDevelopment())
+    app.Logger.LogWarning("DEVELOPMENT SIGN-IN IS ON in the {Env} environment: anyone who can reach this API can get an incident-commander token. Never expose this deployment.", app.Environment.EnvironmentName);
 app.UseAuthentication();
 app.UseAuthorization();
 
 if (live && config.GetValue("Lookout:MigrateOnStartup", true))
 {
-    await using var scope = app.Services.CreateAsyncScope();
-    await scope.ServiceProvider.GetRequiredService<LookoutDb>().Database.MigrateAsync();
+    // Migrations run as the schema owner when a separate connection is configured; requests are then
+    // served on the runtime connection, whose role cannot alter tables or rewrite the audit trail.
+    var migrations = config.GetConnectionString("LookoutMigrations");
+    if (string.IsNullOrWhiteSpace(migrations))
+    {
+        await using var scope = app.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<LookoutDb>().Database.MigrateAsync();
+    }
+    else
+    {
+        await using var owner = new LookoutDb(new DbContextOptionsBuilder<LookoutDb>()
+            .UseNpgsql(migrations, n => n.UseNetTopologySuite()).Options);
+        await owner.Database.MigrateAsync();
+    }
 }
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", live, devAuth }));

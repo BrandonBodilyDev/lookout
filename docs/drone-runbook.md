@@ -77,7 +77,7 @@ Report fp32 against int8 latency and accuracy once quantized; that comparison is
 With the stack running (`docker compose up`), publish a surveyed front into the live incident:
 
 ```bash
-MQTT_USER=lookout MQTT_PASSWORD=lookout-dev-mqtt dotnet run --project src/Lookout.Sim -- drone survey scenarios/backyard.yaml DJI_0001.MP4 --publish <incident-id>
+MQTT_USER=field MQTT_PASSWORD=lookout-dev-field dotnet run --project src/Lookout.Sim -- drone survey scenarios/backyard.yaml DJI_0001.MP4 --publish <incident-id>
 ```
 
 The dashboard labels the fire front with its source, so it is always clear whether the engine is working from truth, a virtual camera, or real footage.

@@ -11,6 +11,16 @@ public sealed class AlertLatch(double downgradeHoldMin)
 
     public AlertLevel Reported { get; private set; } = AlertLevel.None;
 
+    /// <summary>
+    /// Set the reported level directly: to undo a change that could not be saved (so it is raised
+    /// again next time), or to restore state after a restart. Clears any pending downgrade.
+    /// </summary>
+    public void Reset(AlertLevel level)
+    {
+        Reported = level;
+        _pendingDowngrade = null;
+    }
+
     /// <summary>Feed the raw level at <paramref name="t"/>; returns true when the reported level changes.</summary>
     public bool Update(AlertLevel raw, double t)
     {

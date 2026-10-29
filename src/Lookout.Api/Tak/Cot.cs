@@ -84,21 +84,25 @@ public sealed class CotSender(CotSettings settings, ILogger<CotSender> log) : IA
     public async Task SendAsync(IEnumerable<XElement> events, CancellationToken ct)
     {
         if (!Enabled || DateTimeOffset.UtcNow < _nextAttempt) return;
+        // Hard time limits: this runs on the live runner's loop, and a TAK host that silently drops
+        // packets must not stall alerting while TCP waits out its own timeouts.
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(TimeSpan.FromSeconds(3));
         try
         {
             if (_client is not { Connected: true })
             {
                 _client?.Dispose();
                 _client = new TcpClient();
-                await _client.ConnectAsync(settings.Host!, settings.Port, ct);
+                await _client.ConnectAsync(settings.Host!, settings.Port, limit.Token);
                 log.LogInformation("CoT export connected to {Host}:{Port}", settings.Host, settings.Port);
             }
             var stream = _client.GetStream();
             foreach (var e in events)
-                await stream.WriteAsync(Encoding.UTF8.GetBytes(CotBuilder.Serialize(e)), ct);
-            await stream.FlushAsync(ct);
+                await stream.WriteAsync(Encoding.UTF8.GetBytes(CotBuilder.Serialize(e)), limit.Token);
+            await stream.FlushAsync(limit.Token);
         }
-        catch (Exception e) when (e is SocketException or IOException)
+        catch (Exception e) when (e is SocketException or IOException || (e is OperationCanceledException && !ct.IsCancellationRequested))
         {
             log.LogWarning("CoT export to {Host}:{Port} failed ({Error}); retrying in 30 s", settings.Host, settings.Port, e.Message);
             _client?.Dispose();

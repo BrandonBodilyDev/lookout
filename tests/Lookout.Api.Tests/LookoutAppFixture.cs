@@ -23,15 +23,30 @@ public sealed class LookoutAppFixture : IAsyncLifetime
         .Build();
 
     public WebApplicationFactory<Program> App { get; private set; } = null!;
+    /// <summary>The schema owner's connection (migrations, and tests that inspect the database).</summary>
     public string ConnectionString => _db.GetConnectionString();
+    /// <summary>The restricted runtime login the API itself uses, exactly as in docker compose.</summary>
+    public string RuntimeConnectionString { get; private set; } = "";
 
     public async ValueTask InitializeAsync()
     {
         await _db.StartAsync();
+        // Same init script docker compose uses: a lookout_runtime login in the lookout_app role.
+        var init = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "deploy", "postgres", "020_lookout_runtime.sql"));
+        await using (var conn = new Npgsql.NpgsqlConnection(_db.GetConnectionString()))
+        {
+            await conn.OpenAsync();
+            await using var cmd = new Npgsql.NpgsqlCommand(init, conn);
+            await cmd.ExecuteNonQueryAsync();
+        }
+        RuntimeConnectionString = new Npgsql.NpgsqlConnectionStringBuilder(_db.GetConnectionString())
+            { Username = "lookout_runtime", Password = "lookout-runtime-dev" }.ConnectionString;
+
         App = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
         {
             b.UseEnvironment("Testing");
-            b.UseSetting("ConnectionStrings:Lookout", _db.GetConnectionString());
+            b.UseSetting("ConnectionStrings:Lookout", RuntimeConnectionString);
+            b.UseSetting("ConnectionStrings:LookoutMigrations", _db.GetConnectionString());
             b.UseSetting("Lookout:DevAuth", "true");
             b.UseSetting("Lookout:Jwt:Key", JwtKey);
             b.UseSetting("Lookout:Live:Enabled", "false");
@@ -40,11 +55,11 @@ public sealed class LookoutAppFixture : IAsyncLifetime
         _ = App.Server; // starts the host, which applies migrations
     }
 
-    public HttpClient Client(string role, string? crewId = null)
+    public HttpClient Client(string role, string? crewId = null, Guid? incidentId = null)
     {
         var issuer = App.Services.GetRequiredService<DevTokenIssuer>();
         var client = App.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", issuer.Issue($"{role}-test", role, crewId));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", issuer.Issue($"{role}-test", role, crewId, incidentId));
         return client;
     }
 

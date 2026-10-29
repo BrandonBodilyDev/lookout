@@ -17,6 +17,7 @@ services:
       POSTGRES_PASSWORD: lookout-dev
     volumes:
       - pgdata:/home/postgres/pgdata
+      - ./deploy/postgres/020_lookout_runtime.sql:/docker-entrypoint-initdb.d/020_lookout_runtime.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lookout -d lookout"]
       interval: 5s
@@ -27,15 +28,19 @@ services:
     volumes:
       - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./deploy/mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./deploy/mosquitto/acl:/mosquitto/config/acl:ro
     ports:
-      - "1883:1883"   # so a local field simulator or MQTT client can join
+      - "127.0.0.1:1883:1883"   # so a local field simulator or MQTT client can join
 
   api:
     build:
       context: .
       dockerfile: src/Lookout.Api/Dockerfile
     environment:
-      ConnectionStrings__Lookout: Host=db;Database=lookout;Username=lookout;Password=lookout-dev;GSS Encryption Mode=Disable
+      # Requests run as lookout_runtime (member of lookout_app: no DDL, insert-only audit trail);
+      # migrations run as the owner.
+      ConnectionStrings__Lookout: Host=db;Database=lookout;Username=lookout_runtime;Password=lookout-runtime-dev;GSS Encryption Mode=Disable
+      ConnectionStrings__LookoutMigrations: Host=db;Database=lookout;Username=lookout;Password=lookout-dev;GSS Encryption Mode=Disable
       Lookout__DevAuth: "true"
       Lookout__Jwt__Key: dev-only-signing-key-change-me-0123456789
       Lookout__Mqtt__Host: mqtt
@@ -60,10 +65,10 @@ services:
       context: .
       dockerfile: src/Lookout.Field/Dockerfile
     environment:
-      <<: *dev-secrets
       LOOKOUT_API: http://api:8080
       MQTT_HOST: mqtt
-      MQTT_USER: lookout
+      MQTT_USER: field
+      MQTT_PASSWORD: lookout-dev-field
       CLOCK_RATE: "4"
       ACK_DELAY_SEC: "10"
     depends_on:
@@ -74,7 +79,7 @@ services:
     build:
       context: web
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       - api
 

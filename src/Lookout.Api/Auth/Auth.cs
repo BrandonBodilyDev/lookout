@@ -25,7 +25,8 @@ public static class Policies
 }
 
 /// <summary>Who did something, as recorded in the audit trail.</summary>
-public sealed record Actor(string Name, string Role, string? CrewId = null)
+/// <param name="IncidentId">For crew devices: the one incident the token is valid for.</param>
+public sealed record Actor(string Name, string Role, string? CrewId = null, Guid? IncidentId = null)
 {
     public static readonly Actor Engine = new("lookout-engine", "system");
     public static readonly Actor Link = new("link-governor", "system");
@@ -33,7 +34,11 @@ public sealed record Actor(string Name, string Role, string? CrewId = null)
     public static Actor From(ClaimsPrincipal user) => new(
         user.FindFirstValue(JwtRegisteredClaimNames.Sub) ?? "unknown",
         user.FindFirstValue("role") ?? "unknown",
-        user.FindFirstValue("crew_id"));
+        user.FindFirstValue("crew_id"),
+        Guid.TryParse(user.FindFirstValue("incident_id"), out var id) ? id : null);
+
+    /// <summary>Crew identities repeat across incidents (every incident has an ALPHA), so a crew token is valid for one incident only.</summary>
+    public bool MayAccessIncident(Guid incidentId) => Role != Roles.Crew || IncidentId == incidentId;
 }
 
 public sealed class JwtSettings
@@ -49,10 +54,11 @@ public sealed class JwtSettings
 /// <summary>Issues short-lived tokens for the dashboard and simulated crew devices when dev auth is on.</summary>
 public sealed class DevTokenIssuer(JwtSettings settings, TimeProvider clock)
 {
-    public string Issue(string name, string role, string? crewId = null, TimeSpan? lifetime = null)
+    public string Issue(string name, string role, string? crewId = null, Guid? incidentId = null, TimeSpan? lifetime = null)
     {
         var claims = new List<Claim> { new(JwtRegisteredClaimNames.Sub, name), new("role", role) };
         if (crewId is not null) claims.Add(new Claim("crew_id", crewId));
+        if (incidentId is not null) claims.Add(new Claim("incident_id", incidentId.Value.ToString()));
         var now = clock.GetUtcNow().UtcDateTime;
         var token = new JwtSecurityToken(settings.Issuer, settings.Audience, claims, now, now + (lifetime ?? TimeSpan.FromHours(8)),
             new SigningCredentials(settings.SigningKey, SecurityAlgorithms.HmacSha256));

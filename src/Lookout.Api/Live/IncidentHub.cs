@@ -13,6 +13,8 @@ public sealed class IncidentHub(LiveSnapshots snapshots) : Hub
 {
     public async Task<object?> Join(Guid incidentId)
     {
+        if (!Actor.From(Context.User!).MayAccessIncident(incidentId))
+            throw new HubException("This crew token is for a different incident.");
         await Groups.AddToGroupAsync(Context.ConnectionId, incidentId.ToString());
         return snapshots.Get(incidentId);
     }

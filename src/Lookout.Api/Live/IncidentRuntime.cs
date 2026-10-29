@@ -77,12 +77,38 @@ public sealed class IncidentRuntime
         }
     }
 
+    /// <summary>
+    /// Accept a surveyed front. Input from a drone link is not trusted: rings are closed if needed,
+    /// degenerate rings are skipped, self-intersecting polygons are repaired, and anything still
+    /// unusable is rejected with a FormatException so the previous front stays in place.
+    /// </summary>
     public void UpdateFront(DroneFrontMessage m)
     {
-        var polygons = m.Coordinates
-            .Select(poly => (Geometry)Local.CreatePolygon(poly[0].Select(p => Frame.ToLocal(p[0], p[1])).ToArray()))
-            .ToList();
-        Front = polygons.Count == 0 ? Local.CreatePolygon() : CascadedPolygonUnion.Union(polygons);
+        var polygons = new List<Geometry>();
+        foreach (var poly in m.Coordinates ?? [])
+        {
+            if (poly is not { Length: > 0 } || poly[0] is not { Length: >= 3 } ring) continue;
+            var coords = ring.Where(p => p is { Length: >= 2 } && double.IsFinite(p[0]) && double.IsFinite(p[1]))
+                .Select(p => Frame.ToLocal(p[0], p[1])).ToList();
+            if (coords.Count < 3) continue;
+            if (!coords[0].Equals2D(coords[^1])) coords.Add(coords[0].Copy());
+            if (coords.Count < 4) continue;
+            Geometry g = Local.CreatePolygon(coords.ToArray());
+            if (!g.IsValid) g = g.Buffer(0);
+            if (!g.IsEmpty) polygons.Add(g);
+        }
+        Geometry front;
+        try
+        {
+            front = polygons.Count == 0 ? Local.CreatePolygon() : CascadedPolygonUnion.Union(polygons);
+        }
+        catch (Exception e) when (e is NetTopologySuite.Geometries.TopologyException or ArgumentException)
+        {
+            throw new FormatException($"Unusable fire-front geometry: {e.Message}", e);
+        }
+        if (m.Coordinates is { Length: > 0 } && front.IsEmpty)
+            throw new FormatException("Fire-front message had polygons but none were usable.");
+        Front = front;
         FrontTime = m.Time;
         FrontSource = m.Source;
     }

@@ -28,7 +28,7 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
         var ct = TestContext.Current.CancellationToken;
         await using var scope = fx.App.Services.CreateAsyncScope();
         var alerts = scope.ServiceProvider.GetRequiredService<AlertService>();
-        var a = await alerts.RaiseAsync(incident, crew, level, $"{crew} {level}: test", 30, 20, ct);
+        var a = (await alerts.RaiseAsync(incident, crew, level, $"{crew} {level}: test", 20, ct)).Alert;
         await alerts.MarkSentAsync(a.Id, ct);
         return await scope.ServiceProvider.GetRequiredService<LookoutDb>().Alerts.AsNoTracking().SingleAsync(x => x.Id == a.Id, ct);
     }
@@ -40,7 +40,7 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
         var body = new { scenarioId = "pine-valley-wind-shift" };
         Assert.Equal(HttpStatusCode.Unauthorized, (await fx.App.CreateClient().PostAsJsonAsync("/api/incidents", body, ct)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await fx.Client("observer").PostAsJsonAsync("/api/incidents", body, ct)).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await fx.Client("crew", "ALPHA").PostAsJsonAsync("/api/incidents", body, ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await fx.Client("crew", "ALPHA", Guid.NewGuid()).PostAsJsonAsync("/api/incidents", body, ct)).StatusCode);
         Assert.Equal(HttpStatusCode.Created, (await fx.Client("ic").PostAsJsonAsync("/api/incidents", body, ct)).StatusCode);
     }
 
@@ -51,10 +51,10 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
         var incident = await CreateIncidentAsync();
         var alert = await RaiseSentAlertAsync(incident, "ALPHA");
 
-        var wrongCrew = await fx.Client("crew", "BRAVO").PostAsJsonAsync($"/api/incidents/{incident}/alerts/{alert.Id}/ack", new { version = alert.Version }, ct);
+        var wrongCrew = await fx.Client("crew", "BRAVO", incident).PostAsJsonAsync($"/api/incidents/{incident}/alerts/{alert.Id}/ack", new { version = alert.Version }, ct);
         Assert.Equal(HttpStatusCode.Forbidden, wrongCrew.StatusCode);
 
-        var ownCrew = await fx.Client("crew", "ALPHA").PostAsJsonAsync($"/api/incidents/{incident}/alerts/{alert.Id}/ack", new { version = alert.Version }, ct);
+        var ownCrew = await fx.Client("crew", "ALPHA", incident).PostAsJsonAsync($"/api/incidents/{incident}/alerts/{alert.Id}/ack", new { version = alert.Version }, ct);
         Assert.Equal(HttpStatusCode.OK, ownCrew.StatusCode);
         Assert.Equal("acknowledged", (await ownCrew.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("state").GetString());
     }
@@ -83,7 +83,7 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
 
         var results = await Task.WhenAll(
             fx.Client("ic").PostAsJsonAsync(url, new { version = alert.Version }, ct),
-            fx.Client("crew", "ALPHA").PostAsJsonAsync(url, new { version = alert.Version }, ct));
+            fx.Client("crew", "ALPHA", incident).PostAsJsonAsync(url, new { version = alert.Version }, ct));
 
         Assert.Equal([HttpStatusCode.OK, HttpStatusCode.Conflict], results.Select(r => r.StatusCode).Order());
         await using var scope = fx.App.Services.CreateAsyncScope();
@@ -130,7 +130,9 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
         var escalated = await alerts.EscalateOverdueAsync(incident, TimeSpan.Zero, ct);
         Assert.Contains(escalated, a => a.Id == first.Id);
 
-        var second = await alerts.RaiseAsync(incident, "BRAVO", AlertLevel.Critical, "BRAVO CRITICAL: test", 25, 21, ct);
+        var raised = await alerts.RaiseAsync(incident, "BRAVO", AlertLevel.Critical, "BRAVO CRITICAL: test", 21, ct);
+        var second = raised.Alert;
+        Assert.Contains(raised.Superseded, a => a.Id == first.Id); // so dashboards can be told
         var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
         var old = await db.Alerts.AsNoTracking().SingleAsync(a => a.Id == first.Id, ct);
         Assert.Equal(Engine.Workflow.AlertState.Superseded, old.State);
@@ -217,11 +219,11 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
         var incident = await CreateIncidentAsync();
         var body = new { lat = 37.3591, lon = -113.62, battery = 80, sequence = 1 };
 
-        var own = await fx.Client("crew", "ALPHA").PostAsJsonAsync($"/api/incidents/{incident}/crews/ALPHA/position", body, ct);
+        var own = await fx.Client("crew", "ALPHA", incident).PostAsJsonAsync($"/api/incidents/{incident}/crews/ALPHA/position", body, ct);
         Assert.Equal(HttpStatusCode.Accepted, own.StatusCode);
         Assert.Equal(16, (await own.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("bytes").GetInt32());
 
-        var other = await fx.Client("crew", "ALPHA").PostAsJsonAsync($"/api/incidents/{incident}/crews/BRAVO/position", body, ct);
+        var other = await fx.Client("crew", "ALPHA", incident).PostAsJsonAsync($"/api/incidents/{incident}/crews/BRAVO/position", body, ct);
         Assert.Equal(HttpStatusCode.Forbidden, other.StatusCode);
 
         var observer = await fx.Client("observer").PostAsJsonAsync($"/api/incidents/{incident}/crews/ALPHA/position", body, ct);
@@ -251,7 +253,7 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
         var ct = TestContext.Current.CancellationToken;
         var incident = await CreateIncidentAsync();
         var alert = await RaiseSentAlertAsync(incident, "ALPHA");
-        await fx.Client("crew", "ALPHA").PostAsJsonAsync($"/api/incidents/{incident}/alerts/{alert.Id}/ack", new { version = alert.Version }, ct);
+        await fx.Client("crew", "ALPHA", incident).PostAsJsonAsync($"/api/incidents/{incident}/alerts/{alert.Id}/ack", new { version = alert.Version }, ct);
 
         var summary = await fx.Client("observer").GetFromJsonAsync<JsonElement>($"/api/incidents/{incident}/summary", ct);
         var alpha = summary.GetProperty("crews").EnumerateArray().Single(c => c.GetProperty("crewId").GetString() == "ALPHA");
@@ -264,6 +266,50 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
         var lines = csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
         Assert.Equal("time_utc,type,crew,alert_id,actor,role,details", lines[0]);
         Assert.Contains(lines, l => l.Contains(",alert.acknowledged,ALPHA,"));
-        Assert.Equal(HttpStatusCode.Forbidden, (await fx.Client("crew", "ALPHA").GetAsync($"/api/incidents/{incident}/audit.csv", ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await fx.Client("crew", "ALPHA", incident).GetAsync($"/api/incidents/{incident}/audit.csv", ct)).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_crew_token_works_only_in_its_own_incident()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var incidentA = await CreateIncidentAsync();
+        var incidentB = await CreateIncidentAsync();
+        var alertInB = await RaiseSentAlertAsync(incidentB, "ALPHA");
+        var alphaInA = fx.Client("crew", "ALPHA", incidentA);
+
+        // Same crew id, different incident: no acknowledging, no positions, no reading.
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await alphaInA.PostAsJsonAsync($"/api/incidents/{incidentB}/alerts/{alertInB.Id}/ack", new { version = alertInB.Version }, ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await alphaInA.PostAsJsonAsync($"/api/incidents/{incidentB}/crews/ALPHA/position", new { lat = 37.36, lon = -113.62 }, ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await alphaInA.GetAsync($"/api/incidents/{incidentB}", ct)).StatusCode);
+
+        var visible = await alphaInA.GetFromJsonAsync<JsonElement>("/api/incidents", ct);
+        Assert.Equal([incidentA], visible.EnumerateArray().Select(i => i.GetProperty("id").GetGuid()));
+    }
+
+    [Fact]
+    public async Task The_runtime_role_cannot_remove_or_rewrite_audit_history()
+    {
+        // Every other test in this class already runs the API as this role, proving it suffices.
+        // Here: what it must NOT be able to do, even bypassing the application.
+        var ct = TestContext.Current.CancellationToken;
+        await CreateIncidentAsync();
+        await using var conn = new NpgsqlConnection(fx.RuntimeConnectionString);
+        await conn.OpenAsync(ct);
+        foreach (var sql in new[]
+        {
+            "DELETE FROM audit_events",
+            "TRUNCATE audit_events",
+            "ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_only",
+            "SELECT drop_chunks('audit_events', older_than => now() + interval '1 day')",
+            "DROP TABLE crew_fixes",
+        })
+        {
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            var e = await Assert.ThrowsAsync<PostgresException>(() => cmd.ExecuteNonQueryAsync(ct));
+            Assert.True(e.SqlState is "42501" or "42P01", $"{sql}: {e.SqlState} {e.MessageText}"); // insufficient privilege / must be owner
+        }
     }
 }

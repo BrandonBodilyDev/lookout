@@ -50,11 +50,13 @@ Short records of the choices that shape Lookout, why they were made, and what th
 
 **Cost.** One slot means an older unacknowledged warning is superseded, not repeated, once a newer one exists. The state machine records that explicitly.
 
-## 7. One loop owns live state
+## 7. One loop owns live state, and nothing stops it
 
 **Decision.** The live runner is a single loop. MQTT messages and HTTP signals go into channels, and the loop drains them before each tick.
 
 **Why.** Per-incident state (front, wind, fixes, monitors, governor) needs no locks, and ordering is obvious when reading the code.
+
+**Guards.** A stalled loop means no alerts for anyone, so each signal, each message, each incident's tick and the TAK export runs under its own guard. Slow I/O stays off the loop: NWS fetches run in the background and post their result back, and TAK writes have a 3-second limit. An alert that cannot be saved is rolled back in the crew's latch, so the next tick raises it again instead of losing it. These came out of an independent review, which also found that a broker outage set off overlapping reconnect loops; the MQTT client now has a single keep-alive loop, and a test starts it with the broker down.
 
 **Cost.** One slow tick delays every incident. At the demo's scale this is far from a problem. Many simultaneous incidents would call for one loop per incident.
 
@@ -71,6 +73,8 @@ Short records of the choices that shape Lookout, why they were made, and what th
 **Decision.** Every alert change and its audit event are written in one transaction. A trigger on `audit_events` rejects UPDATE, DELETE and TRUNCATE. The table is a TimescaleDB hypertable, compressed after 30 days and never dropped.
 
 **Why.** An audit trail the application promises not to edit is weaker than one the database refuses to edit. That matters for after-action reviews, and for any regulated workflow.
+
+**Second layer.** The API does not connect as the table owner. Migrations run as the owner; requests run as `lookout_runtime`, a member of `lookout_app`, which may only INSERT and SELECT the audit table. An independent review showed why the trigger alone is not enough: the owner can drop compressed chunks or disable the trigger. The runtime role can do neither, and every API integration test runs as that role.
 
 **Cost.** Corrections are new events. Purging data requires a deliberate migration, not an API call.
 
@@ -104,4 +108,6 @@ Short records of the choices that shape Lookout, why they were made, and what th
 
 **Why.** It makes the role model testable and demonstrable without an identity provider. Swapping in Entra ID or another OIDC issuer changes configuration, not authorization code.
 
-**Cost.** Dev auth must never be enabled on a reachable deployment. Startup refuses to run live mode without a signing key of at least 32 characters.
+**Scope.** Crew tokens carry the incident they were issued for, because crew ids such as ALPHA repeat across incidents; every incident endpoint and the live hub refuse a crew token from another incident. On the broker, the server and the field simulator have separate accounts, and an ACL lets a real crew device publish only on its own uplink and read only its own downlink.
+
+**Cost.** Dev auth must never be enabled on a reachable deployment. Docker compose binds every port to localhost, the API logs a warning whenever dev sign-in is on outside Development, and startup refuses to run live mode without a signing key of at least 32 characters.

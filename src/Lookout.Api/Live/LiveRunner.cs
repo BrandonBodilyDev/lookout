@@ -72,19 +72,26 @@ public sealed class LiveRunner(
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(options.TickSeconds));
         do
         {
-            try
-            {
-                while (signals.Reader.TryRead(out var s)) await HandleSignalAsync(s, ct);
-                while (_inbox.Reader.TryRead(out var m)) await HandleMessageAsync(m.Topic, m.Payload, ct);
-                foreach (var rt in _incidents.Values.ToList()) await TickAsync(rt, ct);
-                await ExportCotAsync(ct);
-            }
-            catch (Exception e) when (!ct.IsCancellationRequested)
-            {
-                log.LogError(e, "Live runner tick failed; continuing");
-            }
+            // Each unit of work is guarded on its own: one bad message or one failing incident must
+            // never stop the others, because a stalled loop means no alerts for anyone.
+            while (signals.Reader.TryRead(out var s)) await Guard("signal", () => HandleSignalAsync(s, ct), ct);
+            while (_inbox.Reader.TryRead(out var m)) await Guard($"message on {m.Topic}", () => HandleMessageAsync(m.Topic, m.Payload, ct), ct);
+            foreach (var rt in _incidents.Values.ToList()) await Guard($"tick of incident {rt.Incident.Id}", () => TickAsync(rt, ct), ct);
+            await Guard("CoT export", () => ExportCotAsync(ct), ct);
         }
         while (await timer.WaitForNextTickAsync(ct));
+    }
+
+    private async Task Guard(string what, Func<Task> work, CancellationToken ct)
+    {
+        try
+        {
+            await work();
+        }
+        catch (Exception e) when (!ct.IsCancellationRequested)
+        {
+            log.LogError(e, "Live runner: {What} failed; continuing", what);
+        }
     }
 
     public override async Task StopAsync(CancellationToken ct)
@@ -116,9 +123,26 @@ public sealed class LiveRunner(
         var rt = new IncidentRuntime(incident, scenario, new GovernorSettings(options.MinSpacingSec, options.RepeatSec));
         await ReloadLayoutAsync(rt, db, ct);
 
-        // Re-offer alerts that were still open when the server last stopped.
+        // Restart: pick up where the last run left off, so a restart does not look like silence
+        // (no fixes, every crew at None) and send everyone false comms and cut-off warnings.
+        foreach (var crew in rt.Crews)
+        {
+            var lastFix = await db.CrewFixes.AsNoTracking()
+                .Where(f => f.IncidentId == id && f.CrewId == crew.CrewId)
+                .OrderByDescending(f => f.Time).FirstOrDefaultAsync(ct);
+            if (lastFix is not null)
+                rt.Fixes[crew.CrewId] = (lastFix.ScenarioMin, rt.Frame.ToLocal(lastFix.Position.X, lastFix.Position.Y), -1);
+            var lastAlert = await db.Alerts.AsNoTracking()
+                .Where(a => a.IncidentId == id && a.CrewId == crew.CrewId)
+                .OrderByDescending(a => a.LinkSeq).FirstOrDefaultAsync(ct);
+            if (lastAlert is not null && rt.Monitors.TryGetValue(crew.CrewId, out var monitor))
+                monitor.Seed(lastAlert.Level);
+        }
+
+        // Re-offer only what still needs the link: unsent alerts, and warnings awaiting acknowledgement.
         var open = await db.Alerts.AsNoTracking()
-            .Where(a => a.IncidentId == id && (a.State == Engine.Workflow.AlertState.Queued || a.State == Engine.Workflow.AlertState.Sent || a.State == Engine.Workflow.AlertState.Escalated))
+            .Where(a => a.IncidentId == id && (a.State == Engine.Workflow.AlertState.Queued
+                || (a.RequiresAck && (a.State == Engine.Workflow.AlertState.Sent || a.State == Engine.Workflow.AlertState.Escalated))))
             .ToListAsync(ct);
         foreach (var a in open) Offer(rt, a, leaveByMin: null);
 
@@ -153,6 +177,9 @@ public sealed class LiveRunner(
             case UplinkReceived u when _incidents.TryGetValue(s.IncidentId, out var rt3):
                 await HandleUplinkAsync(rt3, u.CrewId, u.Payload, ct);
                 break;
+            case NwsWindReceived w when _incidents.TryGetValue(s.IncidentId, out var rt4):
+                rt4.UpdateWind(rt4.Wind with { WindFromDeg = w.WindFromDeg ?? rt4.Wind.WindFromDeg, MidflameWindMs = w.MidflameWindMs }, w.Label);
+                break;
         }
     }
 
@@ -162,30 +189,24 @@ public sealed class LiveRunner(
         var rt = _incidents.GetValueOrDefault(t.Incident) ?? await LoadAsync(t.Incident, ct);
         if (rt is null) return;
 
-        try
+        switch (t.Path)
         {
-            switch (t.Path)
-            {
-                case ["crew", var crewId, "up"]:
-                    await HandleUplinkAsync(rt, crewId, payload, ct);
-                    break;
-                case ["drone", "front"]:
-                    rt.UpdateFront(SurveyJson.Decode<DroneFrontMessage>(payload));
-                    break;
-                case ["wx"] when rt.Incident.WindSource == WindSource.Field:
-                    var wx = SurveyJson.Decode<WeatherMessage>(payload);
-                    rt.UpdateWind(new SpreadConditions(wx.WindFromDeg, wx.MidflameWindMs, wx.HeadRateMPerMin), wx.Source);
-                    break;
-                case ["wx"]:
-                    // NWS mode: keep the field's head-fire rate, which NWS cannot provide.
-                    var fieldWx = SurveyJson.Decode<WeatherMessage>(payload);
-                    rt.UpdateWind(rt.Wind with { HeadRateMPerMin = fieldWx.HeadRateMPerMin }, rt.WindSource);
-                    break;
-            }
-        }
-        catch (Exception e) when (e is FormatException or JsonException)
-        {
-            log.LogWarning("Dropped malformed message on {Topic}: {Error}", topic, e.Message);
+            case ["crew", var crewId, "up"]:
+                await HandleUplinkAsync(rt, crewId, payload, ct);
+                break;
+            case ["drone", "front"]:
+                rt.UpdateFront(SurveyJson.Decode<DroneFrontMessage>(payload));
+                break;
+            case ["wx"]:
+                var wx = SurveyJson.Decode<WeatherMessage>(payload);
+                if (!double.IsFinite(wx.WindFromDeg) || !double.IsFinite(wx.MidflameWindMs) || wx.MidflameWindMs is < 0 or > 60
+                    || !double.IsFinite(wx.HeadRateMPerMin) || wx.HeadRateMPerMin is <= 0 or > 1000)
+                    throw new FormatException($"Weather values out of range: {wx}");
+                if (rt.Incident.WindSource == WindSource.Field)
+                    rt.UpdateWind(new SpreadConditions(((wx.WindFromDeg % 360) + 360) % 360, wx.MidflameWindMs, wx.HeadRateMPerMin), wx.Source);
+                else // NWS mode: keep NWS wind, take only the head-fire rate NWS cannot provide.
+                    rt.UpdateWind(rt.Wind with { HeadRateMPerMin = wx.HeadRateMPerMin }, rt.WindSource);
+                break;
         }
     }
 
@@ -198,13 +219,18 @@ public sealed class LiveRunner(
         switch (WireFormat.DecodeUplink(payload))
         {
             case PositionReport p:
-                var scenarioMin = rt.ScenarioMinute(p.Time);
+                // Trust the device clock only up to the server's: one fix stamped in the future would
+                // otherwise make every later fix look older and freeze the crew's position.
+                var received = clock.GetUtcNow();
+                var fixTime = p.Time > received.AddSeconds(5) ? received : p.Time;
+                if (fixTime != p.Time) log.LogWarning("Crew {Crew} fix stamped {Stamp:o} is in the future; using receive time", crewId, p.Time);
+                var scenarioMin = rt.ScenarioMinute(fixTime);
                 var local = rt.Frame.ToLocal(p.Lon, p.Lat);
                 if (!rt.Fixes.TryGetValue(crewId, out var prev) || scenarioMin > prev.ScenarioMin)
                     rt.Fixes[crewId] = (scenarioMin, local, p.BatteryPercent);
                 db.CrewFixes.Add(new CrewFix
                 {
-                    Time = p.Time, IncidentId = rt.Incident.Id, CrewId = crewId,
+                    Time = fixTime, IncidentId = rt.Incident.Id, CrewId = crewId,
                     Position = new NetTopologySuite.Geometries.Point(p.Lon, p.Lat) { SRID = 4326 },
                     ScenarioMin = scenarioMin, Bytes = payload.Length,
                 });
@@ -251,9 +277,21 @@ public sealed class LiveRunner(
             rt.LastAssessment[crew.CrewId] = a;
             if (a.Change is not { } change) continue;
 
-            var alert = await alerts.RaiseAsync(rt.Incident.Id, crew.CrewId, change.To, change.Text, change.Bytes, t, ct);
-            Offer(rt, alert, a.Cutoff.LeaveByMin);
-            await group.SendAsync("alert", AlertDto.From(alert), ct);
+            RaiseResult raised;
+            try
+            {
+                raised = await alerts.RaiseAsync(rt.Incident.Id, crew.CrewId, change.To, change.Text, t, ct);
+            }
+            catch (Exception e) when (!ct.IsCancellationRequested)
+            {
+                // Not recorded means not sent: roll the latch back so the next tick raises it again.
+                rt.Monitors[crew.CrewId].Revert(change);
+                log.LogError(e, "Could not raise {Level} for crew {Crew}; will retry next tick", change.To, crew.CrewId);
+                continue;
+            }
+            Offer(rt, raised.Alert, a.Cutoff.LeaveByMin);
+            foreach (var old in raised.Superseded) await group.SendAsync("alert", AlertDto.From(old), ct);
+            await group.SendAsync("alert", AlertDto.From(raised.Alert), ct);
         }
 
         var timeout = TimeSpan.FromMinutes(options.AckTimeoutMin / rt.Incident.ClockRate);
@@ -268,9 +306,19 @@ public sealed class LiveRunner(
                 continue;
             }
             rt.Governor.Delivered(tx);
-            await alerts.MarkSentAsync(tx.AlertId, ct);
-            var sent = await scope.ServiceProvider.GetRequiredService<LookoutDb>().Alerts.AsNoTracking().SingleAsync(x => x.Id == tx.AlertId, ct);
-            await group.SendAsync("alert", AlertDto.From(sent), ct);
+            try
+            {
+                await alerts.MarkSentAsync(tx.AlertId, ct);
+                var sent = await scope.ServiceProvider.GetRequiredService<LookoutDb>().Alerts.AsNoTracking().SingleAsync(x => x.Id == tx.AlertId, ct);
+                await group.SendAsync("alert", AlertDto.From(sent), ct);
+            }
+            catch (Exception e) when (!ct.IsCancellationRequested)
+            {
+                // The message did go out; only the bookkeeping failed (for example the IC cancelled it
+                // in the same instant). Log it and carry on with the other transmissions.
+                log.LogWarning(e, "Sent alert {Alert} but could not record it", tx.AlertId);
+                scope.ServiceProvider.GetRequiredService<LookoutDb>().ChangeTracker.Clear();
+            }
         }
 
         var frame = LiveFrame.Build(rt, t, now);
@@ -328,21 +376,29 @@ public sealed class LiveRunner(
         rt.Governor.Offer(alert.CrewId, alert.Id, (int)alert.Level, payload, alert.RequiresAck);
     }
 
-    private async Task RefreshNwsAsync(IncidentRuntime rt, DateTimeOffset now, CancellationToken ct)
+    /// <summary>
+    /// Starts an NWS fetch off the loop (it can take tens of seconds when NWS is slow); the result
+    /// comes back as a signal and is applied on the loop.
+    /// </summary>
+    private Task RefreshNwsAsync(IncidentRuntime rt, DateTimeOffset now, CancellationToken ct)
     {
-        if (_nwsFetched.TryGetValue(rt.Incident.Id, out var last) && now - last < TimeSpan.FromMinutes(10)) return;
+        if (_nwsFetched.TryGetValue(rt.Incident.Id, out var last) && now - last < TimeSpan.FromMinutes(10)) return Task.CompletedTask;
         _nwsFetched[rt.Incident.Id] = now;
-        try
+        var (id, lat, lon) = (rt.Incident.Id, rt.Frame.OriginLat, rt.Frame.OriginLon);
+        _ = Task.Run(async () =>
         {
-            var w = await nws.GetAsync(rt.Frame.OriginLat, rt.Frame.OriginLon, ct);
-            if (w.WindKmh is { } kmh)
-                rt.UpdateWind(rt.Wind with { WindFromDeg = w.WindFromDeg ?? rt.Wind.WindFromDeg, MidflameWindMs = NwsClient.MidflameMs(kmh) },
-                    $"NWS {w.Station} {w.ObservedAt:HH:mm}Z");
-        }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or KeyNotFoundException)
-        {
-            log.LogWarning("NWS fetch failed for incident {Id}: {Error}; keeping last wind", rt.Incident.Id, e.Message);
-        }
+            try
+            {
+                var w = await nws.GetAsync(lat, lon, ct);
+                if (w.WindKmh is { } kmh)
+                    signals.Post(new NwsWindReceived(id, w.WindFromDeg, NwsClient.MidflameMs(kmh), $"NWS {w.Station} {w.ObservedAt:HH:mm}Z"));
+            }
+            catch (Exception e) when (!ct.IsCancellationRequested)
+            {
+                log.LogWarning("NWS fetch failed for incident {Id}: {Error}; keeping last wind", id, e.Message);
+            }
+        }, ct);
+        return Task.CompletedTask;
     }
 
     private async Task CloseAsync(IncidentRuntime rt, CancellationToken ct)

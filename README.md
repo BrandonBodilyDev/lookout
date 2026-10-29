@@ -1,5 +1,7 @@
 # Lookout
 
+[![CI](https://github.com/BrandonBodilyDev/lookout/actions/workflows/ci.yml/badge.svg)](https://github.com/BrandonBodilyDev/lookout/actions/workflows/ci.yml)
+
 **Escape-route cut-off warnings for wildland fire crews.** Lookout compares where the fire will be with how long a crew needs to walk out, and tells the crew when to leave: *"LEAVE NOW via ER-1 to SZ-1. Fire at route 14:28."* The warning travels over a link sized like a satellite messenger, and every step of it is recorded in an append-only audit trail.
 
 The name comes from LCES (Lookouts, Communications, Escape routes, Safety zones), the wildland firefighting safety doctrine. Lookout tries to automate the lookout's most important call. It is not affiliated with any commercial product of the same name.
@@ -258,11 +260,17 @@ dotnet run --project src/Lookout.Api
 ```
 
 ```bash
-MQTT_USER=lookout MQTT_PASSWORD=lookout-dev-mqtt CLOCK_RATE=8 dotnet run --project src/Lookout.Field
+MQTT_USER=field MQTT_PASSWORD=lookout-dev-field CLOCK_RATE=8 dotnet run --project src/Lookout.Field
 ```
 
 ```bash
 npm --prefix web install && npm --prefix web run dev
+```
+
+For traces and metrics in the Aspire dashboard at http://localhost:18888:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
 ```
 
 The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add `?t=20` to a replay URL to open it at minute 20. On the field simulator, set `NO_ACK_CREWS=BRAVO` to watch an alert escalate, or `DRONE_MODE=camera` to feed the engine detected fronts instead of the true fire.

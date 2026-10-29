@@ -42,7 +42,8 @@ function CrewSignIn({ onDone }: { onDone: (s: CrewSession) => void }) {
 
   const pickIncident = async (id: string) => setDetail(await api<IncidentDetail>(`/api/incidents/${id}`, lookupToken));
   const pickCrew = async (crewId: string) => {
-    const { token } = await post<{ token: string }>("/api/dev/token", null, { role: "crew", crewId, name: `${crewId.toLowerCase()}-phone` });
+    // Crew tokens are scoped to one incident: crew ids like ALPHA repeat across incidents.
+    const { token } = await post<{ token: string }>("/api/dev/token", null, { role: "crew", crewId, incidentId: detail!.id, name: `${crewId.toLowerCase()}-phone` });
     onDone({ token, incidentId: detail!.id, crewId });
   };
 
@@ -85,7 +86,11 @@ function CrewScreen({ session, header, onLeave }: { session: CrewSession; header
 
   const upsert = useCallback((a: LiveAlert) => {
     if (a.crewId !== crewId) return;
-    setAlerts((m) => new Map(m).set(a.id, a));
+    // Events can arrive out of order; keep the newest version of each alert.
+    setAlerts((m) => {
+      const existing = m.get(a.id);
+      return existing && existing.version > a.version ? m : new Map(m).set(a.id, a);
+    });
     if (!seen.current.has(a.id) && a.requiresAck && (a.state === "sent" || a.state === "escalated")) {
       seen.current.add(a.id);
       navigator.vibrate?.([400, 150, 400, 150, 400]);

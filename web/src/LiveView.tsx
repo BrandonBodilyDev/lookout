@@ -180,7 +180,11 @@ function Incident(props: { id: string; token: string; role: Role; header: React.
     }
   }, [id, token, props]);
 
-  const upsert = useCallback((a: LiveAlert) => setAlerts((m) => new Map(m).set(a.id, a)), []);
+  // Events can arrive out of order (an HTTP response and a hub push for the same change); keep the newest version.
+  const upsert = useCallback((a: LiveAlert) => setAlerts((m) => {
+    const existing = m.get(a.id);
+    return existing && existing.version > a.version ? m : new Map(m).set(a.id, a);
+  }), []);
 
   useEffect(() => {
     loadDetail();
