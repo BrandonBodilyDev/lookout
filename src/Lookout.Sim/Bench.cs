@@ -23,7 +23,7 @@ public static class Bench
         var known = alpha.TruePositionAt(t);
 
         Console.WriteLine($"Terrain {scenario.Terrain.Nx} x {scenario.Terrain.Ny} cells at {scenario.Terrain.CellSize} m; {options.Count} routes per crew; scenario minute {t}.");
-        Console.WriteLine("crews   tick ms (median of 5)   per crew ms");
+        Console.WriteLine($"crews   tick ms (median of 5)   per crew ms   parallel tick ms ({Environment.ProcessorCount} cores)");
         foreach (var n in crewCounts)
         {
             var monitors = Enumerable.Range(0, n).Select(i => new CrewMonitor($"C{i}", scenario.Alerts, grid)).ToList();
@@ -35,7 +35,14 @@ public static class Bench
                 samples.Add(sw.Elapsed.TotalMilliseconds);
             }
             var median = samples.Order().ElementAt(2);
-            Console.WriteLine($"{n,5}   {median,18:0.0}   {median / n,13:0.00}");
+            var parallel = new List<double>();
+            for (var rep = 0; rep < 5; rep++)
+            {
+                var sw = Stopwatch.StartNew();
+                Parallel.ForEach(monitors, m => m.Assess(options, known, t, front, wind, t, _ => "--:--"));
+                parallel.Add(sw.Elapsed.TotalMilliseconds);
+            }
+            Console.WriteLine($"{n,5}   {median,18:0.0}   {median / n,13:0.00}   {parallel.Order().ElementAt(2),16:0.0}");
         }
     }
 }

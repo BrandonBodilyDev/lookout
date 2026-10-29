@@ -9,6 +9,7 @@ using Lookout.Engine.Spread;
 using Lookout.Link;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using NetTopologySuite.Geometries;
 
 namespace Lookout.Api.Live;
 
@@ -286,15 +287,27 @@ public sealed class LiveRunner(
         var alerts = scope.ServiceProvider.GetRequiredService<AlertService>();
         var group = hub.Clients.Group(rt.Incident.Id.ToString());
 
+        // Assess every crew in parallel: each crew has its own monitor, and what they share (terrain,
+        // spread grid, the front's cached cells) is read-only. Saving, sending and pushing stay
+        // sequential below, in crew order, on the loop.
+        var work = new List<(CrewRecord Crew, List<RouteOption> Options, Coordinate Known, double? FixMin)>();
         foreach (var crew in rt.Crews)
         {
             if (!rt.Routes.TryGetValue(crew.CrewId, out var options)) continue;
             var hasFix = rt.Fixes.TryGetValue(crew.CrewId, out var fix);
             // Give devices a few minutes to report in before treating silence as a comms problem.
             if (!hasFix && t < rt.Scenario.Alerts.CommsStaleMin) continue;
-            var known = hasFix ? fix.Position : options[0].Profile.Samples[0].Point;
+            work.Add((crew, options, hasFix ? fix.Position : options[0].Profile.Samples[0].Point, hasFix ? fix.ScenarioMin : null));
+        }
+        var (front, wind) = (rt.Front, rt.Wind);
+        var assessed = new CrewAssessment[work.Count];
+        Parallel.For(0, work.Count, new ParallelOptions { CancellationToken = ct }, i =>
+            assessed[i] = rt.Monitors[work[i].Crew.CrewId].Assess(work[i].Options, work[i].Known, work[i].FixMin, front, wind, t, rt.ClockLabel));
 
-            var a = rt.Monitors[crew.CrewId].Assess(options, known, hasFix ? fix.ScenarioMin : null, rt.Front, rt.Wind, t, rt.ClockLabel);
+        for (var i = 0; i < work.Count; i++)
+        {
+            var crew = work[i].Crew;
+            var a = assessed[i];
             rt.LastAssessment[crew.CrewId] = a;
             if (a.Change is not { } change) continue;
 
