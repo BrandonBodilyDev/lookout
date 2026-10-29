@@ -12,7 +12,7 @@ How to run Lookout as a service: configuration, releases, backups, monitoring, a
 | `Lookout:Jwt:Key` | yes | Token signing key, at least 32 characters. Replaced by an OIDC issuer in a real deployment. |
 | `Lookout:DevAuth` | no | Development sign-in. Never on for a reachable deployment; the API logs a warning if it is on outside Development. |
 | `Lookout:Mqtt:Host`, `Username`, `Password` | password | Broker. Without a host the engine runs in loopback mode and nothing leaves the server. |
-| `Lookout:WebPush:PublicKey`, `PrivateKey` | private key | VAPID identity for push alerts. Generate with `lookout-sim vapid`. |
+| `Lookout:WebPush:PublicKey`, `PrivateKey` | private key | VAPID identity for push alerts. Generate with `dotnet run --project src/Lookout.Sim -- vapid`. |
 | `Lookout:Cot:Host`, `Port` | no | Optional TAK server for Cursor on Target export. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | no | Optional OTLP collector for traces and metrics. |
 
@@ -21,6 +21,10 @@ How to run Lookout as a service: configuration, releases, backups, monitoring, a
 1. CI must be green: engine and API tests (the API tests run every migration on a real TimescaleDB, as the restricted runtime role), the dashboard build, and the image builds.
 2. Back up the database (below).
 3. Review the SQL a release will run:
+
+   ```bash
+   dotnet tool restore
+   ```
 
    ```bash
    dotnet ef migrations script --idempotent --project src/Lookout.Api -o release.sql
@@ -45,7 +49,7 @@ IC_TOKEN=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"role":"ic",
 curl -X PUT -d "" -H "Authorization: Bearer $IC_TOKEN" http://localhost:8080/api/incidents/$INCIDENT/crews/ALPHA/devices/300434060012345
 ```
 
-Assigning a device that already belongs to another crew or incident moves it. `DELETE` on the same path unassigns it. Both are recorded in the audit trail. Reports from an unassigned device are dropped and logged once per device. Devices heard in the last 30 minutes without an assignment are listed by `GET /api/devices/unassigned` and on the dashboard. Last-heard times are kept in memory, so they are blank after an API restart until each device reports again. The field simulator assigns one device per crew, named `SIM-{incident}-{crew}`.
+Assigning a device that already belongs to another crew or incident moves it. `DELETE` on the same path unassigns it. Both are recorded in the audit trail. Reports from an unassigned device are dropped and logged once per device. Devices heard in the last 30 minutes without an assignment are listed by `GET /api/devices/unassigned` and on the dashboard. Last-heard times are kept in memory, so they are blank after an API restart until each device reports again. The field simulator assigns one device per crew, named `SIM-` plus the last 8 hex digits of the incident id plus the crew, for example `SIM-f95e7e1c-ALPHA`.
 
 ## Backup and restore
 
@@ -98,7 +102,8 @@ Metrics come from OpenTelemetry (see `docker-compose.observability.yml`). Sugges
 
 | Signal | Alert when | Why |
 |---|---|---|
-| `lookout.engine.tick.duration` p99 | above 500 ms for 5 minutes | The loop is falling behind its 1-second tick; alerts will be late. |
+| `lookout.engine.loop.duration` p99 | above 1000 ms for 5 minutes | One full pass (messages, every incident, CoT) is longer than the 1-second tick; alerts will be late. The API also logs a warning, at most every 30 s, and the readiness detail shows the slowest pass in the last minute. |
+| `lookout.engine.tick.duration` p99 | above 500 ms for 5 minutes | One incident's evaluation is slow, usually many crews or routes; see the benchmark in the architecture notes. |
 | `lookout.link.downlink.failures` | any, for 2 minutes | The broker is unreachable; warnings are queued, not delivered. |
 | `lookout.link.uplink.messages` | zero for 5 minutes while an incident runs | No crew fixes are arriving: link or field problem. |
 | `lookout.alerts.escalated` | any | A crew did not acknowledge a warning; the IC must act. This is an operational alert, not just a technical one. |

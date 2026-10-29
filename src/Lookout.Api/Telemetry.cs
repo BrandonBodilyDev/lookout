@@ -18,6 +18,12 @@ public static class Telemetry
     public static readonly Histogram<double> TickDuration =
         Meter.CreateHistogram<double>("lookout.engine.tick.duration", "ms", "Time to evaluate every crew of one incident once.");
 
+    public static readonly Histogram<double> LoopDuration =
+        Meter.CreateHistogram<double>("lookout.engine.loop.duration", "ms", "One pass of the live loop: signals, inbound messages, every incident's tick, CoT export.");
+
+    public static readonly Histogram<int> LoopMessages =
+        Meter.CreateHistogram<int>("lookout.engine.loop.messages", "{message}", "Inbound MQTT messages handled in one pass of the live loop.");
+
     public static readonly Counter<long> AlertsRaised =
         Meter.CreateCounter<long>("lookout.alerts.raised", "{alert}", "Alerts raised by the engine, by level.");
 

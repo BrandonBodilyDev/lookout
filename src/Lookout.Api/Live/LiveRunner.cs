@@ -61,6 +61,7 @@ public sealed class LiveRunner(
     private volatile IReadOnlyDictionary<string, (Guid Incident, string Crew)> _devices = new Dictionary<string, (Guid, string)>();
     private volatile bool _devicesLoaded;
     private DateTimeOffset _nextDeviceReload;
+    private DateTimeOffset _nextOverrunLog;
     /// <summary>A safety net: the directory also reloads on every assignment, but a missed signal must not last.</summary>
     private static readonly TimeSpan DeviceReloadInterval = TimeSpan.FromSeconds(60);
     private readonly HashSet<string> _unknownDevicesLogged = [];
@@ -92,12 +93,28 @@ public sealed class LiveRunner(
         {
             // Each unit of work is guarded on its own: one bad message or one failing incident must
             // never stop the others, because a stalled loop means no alerts for anyone.
+            var passStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+            var messages = 0;
             while (signals.Reader.TryRead(out var s)) await Guard("signal", () => HandleSignalAsync(s, ct), ct);
             if (!_devicesLoaded || clock.GetUtcNow() >= _nextDeviceReload) await Guard("loading the device directory", () => ReloadDevicesAsync(ct), ct);
-            while (_inbox.Reader.TryRead(out var m)) await Guard($"message on {m.Topic}", () => HandleMessageAsync(m.Topic, m.Payload, m.Devices, ct), ct);
+            while (_inbox.Reader.TryRead(out var m))
+            {
+                messages++;
+                await Guard($"message on {m.Topic}", () => HandleMessageAsync(m.Topic, m.Payload, m.Devices, ct), ct);
+            }
             foreach (var rt in _incidents.Values.ToList()) await Guard($"tick of incident {rt.Incident.Id}", () => TickAsync(rt, ct), ct);
             await Guard("CoT export", () => ExportCotAsync(ct), ct);
-            health.Ticked(clock.GetUtcNow());
+            var passMs = System.Diagnostics.Stopwatch.GetElapsedTime(passStarted).TotalMilliseconds;
+            Telemetry.LoopDuration.Record(passMs);
+            Telemetry.LoopMessages.Record(messages);
+            health.Ticked(clock.GetUtcNow(), passMs);
+            // A pass longer than the tick means alerts go out late; say so, but not on every pass.
+            if (passMs > options.TickSeconds * 1000 && clock.GetUtcNow() >= _nextOverrunLog)
+            {
+                log.LogWarning("Live loop pass took {Ms:0} ms, longer than the {Tick} s tick ({Messages} messages, {Incidents} incidents); alerts are running late",
+                    passMs, options.TickSeconds, messages, _incidents.Count);
+                _nextOverrunLog = clock.GetUtcNow().AddSeconds(30);
+            }
         }
         while (await timer.WaitForNextTickAsync(ct));
     }

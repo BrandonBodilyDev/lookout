@@ -11,7 +11,25 @@ public sealed class LiveHealth
 {
     private long _lastTickTicks;
     public DateTimeOffset? LastTick => Interlocked.Read(ref _lastTickTicks) is var t and > 0 ? new DateTimeOffset(t, TimeSpan.Zero) : null;
-    public void Ticked(DateTimeOffset at) => Interlocked.Exchange(ref _lastTickTicks, at.UtcTicks);
+    private readonly object _passLock = new();
+    private readonly Queue<(DateTimeOffset At, double Ms)> _passes = new();
+
+    /// <summary>A loop pass finished at <paramref name="at"/> after <paramref name="passMs"/> milliseconds.</summary>
+    public void Ticked(DateTimeOffset at, double passMs = 0)
+    {
+        Interlocked.Exchange(ref _lastTickTicks, at.UtcTicks);
+        lock (_passLock)
+        {
+            _passes.Enqueue((at, passMs));
+            while (_passes.Count > 0 && at - _passes.Peek().At > TimeSpan.FromMinutes(1)) _passes.Dequeue();
+        }
+    }
+
+    /// <summary>Slowest loop pass in the last minute, in milliseconds; null before the first pass.</summary>
+    public double? SlowestPassMs
+    {
+        get { lock (_passLock) return _passes.Count == 0 ? null : _passes.Max(p => p.Ms); }
+    }
 
     /// <summary>Null in loopback mode (no broker configured).</summary>
     public Func<bool>? BrokerConnected { get; set; }
@@ -44,7 +62,8 @@ public sealed class LiveHealth
         var checks = new List<Check>();
         var stallAfter = StallAfter(options);
         checks.Add(LastTick is { } t
-            ? new Check("loop", now - t <= stallAfter, $"last pass {(now - t).TotalSeconds:0.0} s ago (stalled after {stallAfter.TotalSeconds:0} s)")
+            ? new Check("loop", now - t <= stallAfter,
+                $"last pass {(now - t).TotalSeconds:0.0} s ago (stalled after {stallAfter.TotalSeconds:0} s); slowest pass in the last minute {SlowestPassMs ?? 0:0} ms")
             : new Check("loop", false, "no pass completed yet"));
         checks.Add(new Check("devices", DevicesLoaded, DevicesLoaded ? "directory loaded" : "directory not loaded: crew uplinks are being dropped"));
         if (BrokerConnected is { } connected)

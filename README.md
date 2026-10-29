@@ -48,7 +48,7 @@ Truth scorecard
   ALPHA: reached safety zone 14:34, burnover never, first cut-off warning 8.0 min before the cut
 ```
 
-A second scenario, [`pine-valley-steady-north.yaml`](scenarios/pine-valley-steady-north.yaml), is the control: the same fire, terrain and crews with no wind shift. Lookout must raise no alerts at all there, and a test enforces it. A warning system that cries wolf gets ignored.
+A second scenario, [`pine-valley-steady-north.yaml`](scenarios/pine-valley-steady-north.yaml), is the control: the same fire and terrain, with no wind shift and no gap in Bravo's position reports. Lookout must raise no alerts at all there, and a test enforces it. A warning system that cries wolf gets ignored.
 
 The demo scenario is also the acceptance test. [`DemoScenarioTests`](tests/Lookout.Engine.Tests/DemoScenarioTests.cs) fails the build if the warning comes later than 6 minutes before the cut, if Alpha is burned over, if Alpha's level flaps back up while walking out, or if any alert exceeds 270 bytes.
 
@@ -91,6 +91,8 @@ The fire front can come from a drone instead of the scenario. The pipeline, in [
 ```bash
 dotnet run --project src/Lookout.Sim -- drone survey scenarios/pine-valley-wind-shift.yaml DJI_0001.MP4 --heading 0 --pitch -90 --publish <incident-id>
 ```
+
+Publishing needs the broker login in `MQTT_USER` and `MQTT_PASSWORD`, as in the [drone runbook](docs/drone-runbook.md).
 
 **How it is tested without real footage.** A synthetic camera renders the scenario's true fire as an aerial image: flame along the edge, burn scar inside, vegetation outside. Two tests score the pipeline against the truth:
 
@@ -151,7 +153,7 @@ leave by   = now + margin - buffer            (buffer = 10 min)
 level      = minutes until leave-by:  < 30 WATCH,  < 15 WARNING,  < 5 CRITICAL
 ```
 
-**Fire arrival.** The terrain is a 30 m elevation grid from USGS 3DEP. Each cell connects to 16 neighbours. Fire travel time along an edge comes from the elliptical fire shape of Anderson (1983), with the FARSITE length-to-breadth relationship (Finney 1998, eq. 13), where U is the midflame wind in m/s, capped at 8:
+**Fire arrival.** The terrain is a 30 m elevation grid from USGS 3DEP. Each cell connects to 16 neighbours. Fire travel time along an edge comes from the elliptical fire shape of Anderson (1983), with the FARSITE length-to-breadth relationship (Finney 1998, eq. 13), where U is the midflame wind in m/s and the ratio is clamped to 1–8:
 
 ```text
 LB     = 0.936·e^(0.2566·U) + 0.461·e^(−0.1548·U) − 0.397
@@ -233,6 +235,7 @@ Sign-in uses development tokens issued by the API; a real deployment would use t
 | `audit_events` | Append-only hypertable: who did what, when, with JSON details |
 | `crew_fixes` | Hypertable of every position received over the link, compressed after 7 days, kept 90 |
 | `push_subscriptions` | Crew phones registered for Web Push, per incident and crew |
+| `devices` | Link devices assigned to crews, versioned; who assigned each and when |
 
 Migrations are EF Core. Hand-written SQL in them creates the hypertables, the append-only trigger, the compression and retention policies, and the runtime role's grants.
 
@@ -269,6 +272,8 @@ dotnet run --project src/Lookout.Sim -- scenarios/pine-valley-wind-shift.yaml
 docker compose up -d db mqtt
 ```
 
+The database is published on localhost 5432 for this. If that port is taken, set `LOOKOUT_DB_PORT` before starting it and change the port in `src/Lookout.Api/appsettings.Development.json` to match.
+
 ```bash
 dotnet run --project src/Lookout.Api
 ```
@@ -281,7 +286,7 @@ MQTT_USER=field MQTT_PASSWORD=lookout-dev-field CLOCK_RATE=8 dotnet run --projec
 npm --prefix web install && npm --prefix web run dev
 ```
 
-For traces and metrics in the Aspire dashboard at http://localhost:18888 (engine tick duration, alerts raised and escalated, acknowledgement latency, link bytes up and down, plus HTTP, database and runtime instrumentation):
+For traces and metrics in the Aspire dashboard at http://localhost:18888 (engine tick duration, alerts raised and escalated, acknowledgement latency, downlink bytes and uplink messages, live loop duration, plus HTTP, database and runtime instrumentation):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build

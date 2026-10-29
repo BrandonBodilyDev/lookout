@@ -47,6 +47,13 @@ Your fire pit is not on the demo terrain, so make a scenario for your location f
 dotnet run --project src/Lookout.Sim -- dem scenarios/backyard.yaml scenarios/terrain/backyard.asc -500 500 -500 500 10
 ```
 
+Then point the copied scenario at the new grid, or the survey will project onto the Pine Valley elevations:
+
+```yaml
+terrain:
+  file: terrain/backyard.asc
+```
+
 Then survey:
 
 ```bash

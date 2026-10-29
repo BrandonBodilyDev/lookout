@@ -34,6 +34,18 @@ public sealed class LiveHealthTests
     }
 
     [Fact]
+    public void Slowest_pass_covers_only_the_last_minute()
+    {
+        var h = new LiveHealth();
+        Assert.Null(h.SlowestPassMs);
+        h.Ticked(Now, 900);
+        h.Ticked(Now.AddSeconds(30), 120);
+        Assert.Equal(900, h.SlowestPassMs);
+        h.Ticked(Now.AddSeconds(61), 80); // the 900 ms pass is now over a minute old
+        Assert.Equal(120, h.SlowestPassMs);
+    }
+
+    [Fact]
     public void Loopback_mode_has_no_broker_check()
     {
         var h = new LiveHealth { DevicesLoaded = true };
