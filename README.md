@@ -307,6 +307,7 @@ The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add
 | `tools` | Generator for the tiny ONNX test model. |
 | `docs/assumptions.md` | Every default parameter, its source, and the open questions for a working firefighter. |
 | `docs/architecture.md` | Design decisions: what was chosen, why, and what it costs. |
+| `docs/operations.md` | Configuration, releases, a verified backup-and-restore procedure, what to monitor, and failure behaviour. |
 | `docs/drone-runbook.md` | How to run the drone pipeline on real footage: subtitle tracks, FOV calibration, public datasets, trained detectors. |
 
 ## Roadmap
