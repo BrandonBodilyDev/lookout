@@ -35,6 +35,7 @@ public sealed class IncidentRuntime
 
     public Geometry Front { get; private set; } = Local.CreatePolygon();
     public DateTimeOffset? FrontTime { get; private set; }
+    public string? FrontSource { get; private set; }
     public SpreadConditions Wind { get; private set; }
     public string WindSource { get; private set; } = "scenario default";
     public Dictionary<string, (double ScenarioMin, Coordinate Position, int Battery)> Fixes { get; } = new();
@@ -83,6 +84,7 @@ public sealed class IncidentRuntime
             .ToList();
         Front = polygons.Count == 0 ? Local.CreatePolygon() : CascadedPolygonUnion.Union(polygons);
         FrontTime = m.Time;
+        FrontSource = m.Source;
     }
 
     public void UpdateWind(SpreadConditions wind, string source)

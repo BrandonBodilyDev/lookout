@@ -14,6 +14,7 @@ public static class LiveEndpoints
     public sealed record VersionedAction(uint Version, string? Reason);
     public sealed record PutRoute(string Name, string SafetyZone, double[][] Path, uint? Version);
     public sealed record PutZone(string Name, double[][] Ring, uint? Version);
+    public sealed record PhonePosition(double Lat, double Lon, int? Battery, ushort? Sequence);
 
     public static void MapLive(this WebApplication app, bool devAuth)
     {
@@ -85,6 +86,20 @@ public static class LiveEndpoints
             Results.Text(new System.Xml.Linq.XElement("events", snapshots.GetCot(id)).ToString(), "application/xml"))
             .RequireAuthorization(Policies.Read);
 
+        // A crew phone without a satellite modem reports position over HTTPS. The API packs it into the
+        // same 16-byte position report a crew device sends over the link and hands it to the live runner.
+        api.MapPost("/{id:guid}/crews/{crewId}/position", (Guid id, string crewId, PhonePosition p, IncidentSignals signals, TimeProvider clock, HttpContext http) =>
+        {
+            var actor = Actor.From(http.User);
+            if (actor.Role == Roles.Crew && !string.Equals(actor.CrewId, crewId, StringComparison.OrdinalIgnoreCase))
+                return Results.Problem($"Crew {actor.CrewId} cannot report a position for crew {crewId}.", statusCode: StatusCodes.Status403Forbidden);
+            if (p.Lat is < -90 or > 90 || p.Lon is < -180 or > 180)
+                return Results.Problem("Latitude or longitude out of range.", statusCode: StatusCodes.Status400BadRequest);
+            var payload = Link.WireFormat.EncodePosition(new Link.PositionReport(p.Sequence ?? 0, clock.GetUtcNow(), p.Lat, p.Lon, p.Battery ?? 100));
+            signals.Post(new UplinkReceived(id, crewId.ToUpperInvariant(), payload));
+            return Results.Accepted(value: new { bytes = payload.Length });
+        }).RequireAuthorization(Policies.Field);
+
         api.MapGet("/{id:guid}/fixes", async (Guid id, string crewId, int? limit, LookoutDb db, CancellationToken ct) =>
             await db.CrewFixes.AsNoTracking().Where(f => f.IncidentId == id && f.CrewId == crewId)
                 .OrderByDescending(f => f.Time).Take(Math.Clamp(limit ?? 100, 1, 1000))
@@ -97,6 +112,13 @@ public static class LiveEndpoints
                 .OrderByDescending(e => e.Time).ThenByDescending(e => e.Id).Take(Math.Clamp(limit ?? 200, 1, 1000))
                 .Select(e => new { e.Id, e.Time, e.Type, e.Actor, e.Role, e.CrewId, e.AlertId, e.Details })
                 .ToListAsync(ct))
+            .RequireAuthorization(policy => policy.RequireRole(Roles.IncidentCommander, Roles.Observer));
+
+        api.MapGet("/{id:guid}/summary", (Guid id, LookoutDb db, CancellationToken ct) => AfterAction.SummaryAsync(db, id, ct))
+            .RequireAuthorization(policy => policy.RequireRole(Roles.IncidentCommander, Roles.Observer));
+
+        api.MapGet("/{id:guid}/audit.csv", async (Guid id, LookoutDb db, CancellationToken ct) =>
+            Results.File(System.Text.Encoding.UTF8.GetBytes(await AfterAction.AuditCsvAsync(db, id, ct)), "text/csv", $"lookout-audit-{id}.csv"))
             .RequireAuthorization(policy => policy.RequireRole(Roles.IncidentCommander, Roles.Observer));
 
         api.MapPut("/{id:guid}/routes/{routeId}", async (Guid id, string routeId, PutRoute r, IncidentService svc, IncidentSignals signals, HttpContext http, CancellationToken ct) =>

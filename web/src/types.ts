@@ -112,6 +112,7 @@ export interface LiveFrame {
   wind: { windFromDeg: number; midflameWindMs: number; headRateMPerMin: number; source: string };
   fire: MultiPolygonCoords;
   frontAgeSec: number | null;
+  frontSource: string | null;
   crews: LiveCrew[];
 }
 

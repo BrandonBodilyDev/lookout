@@ -17,6 +17,7 @@ public static class LiveFrame
             Wind = new { rt.Wind.WindFromDeg, rt.Wind.MidflameWindMs, rt.Wind.HeadRateMPerMin, Source = rt.WindSource },
             Fire = GeoDto.MultiPolygon(f, rt.Front),
             FrontAgeSec = rt.FrontTime is { } ft ? Math.Round((now - ft).TotalSeconds) : (double?)null,
+            rt.FrontSource,
             Crews = rt.Crews.Select(c =>
             {
                 rt.Fixes.TryGetValue(c.CrewId, out var fix);

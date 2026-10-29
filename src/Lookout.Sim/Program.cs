@@ -23,9 +23,12 @@ if (args.Length > 0 && args[0] == "dem")
     return 0;
 }
 
-var path = args.Length > 0 ? args[0] : Path.Combine("scenarios", "pine-valley-wind-shift.yaml");
+var path = args.Length > 0 && !args[0].StartsWith("--") ? args[0] : Path.Combine("scenarios", "pine-valley-wind-shift.yaml");
 var scenario = ScenarioLoader.LoadFile(path);
-var result = Simulator.Run(scenario);
+// --camera: the engine sees what a virtual survey camera and the colour detector report, not the true fire.
+var useCamera = args.Contains("--camera");
+var result = Simulator.Run(scenario, useCamera ? CameraSurvey.Observer(scenario) : null);
+if (useCamera) Console.WriteLine("Fire front: virtual survey camera at 1800 m + colour detector (not scenario truth)");
 
 Console.WriteLine($"{scenario.Name}  ({scenario.Start:yyyy-MM-dd HH:mm}, {scenario.DurationMin} min)");
 Console.WriteLine();

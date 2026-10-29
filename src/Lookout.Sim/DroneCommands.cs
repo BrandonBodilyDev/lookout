@@ -73,6 +73,31 @@ public static class DroneCommands
                 Console.WriteLine($"Synthetic flight over the fire at minute {minute}: {video} and {srt}");
                 return 0;
             }
+            case "frame" when args.Length >= 5:
+            {
+                // A synthetic survey frame beside the same frame with detected pixels tinted blue.
+                var scenario = ScenarioLoader.LoadFile(args[2]);
+                var minute = double.Parse(args[3], CultureInfo.InvariantCulture);
+                var truth = scenario.Fire.FrontAt(minute);
+                var c = truth.Centroid.Coordinate;
+                var terrain = scenario.Terrain!;
+                var projector = new GroundProjector(CameraModel.WithAspect(640, 480, 71.5), terrain);
+                var pose = new CameraPose(new Coordinate(c.X - 900, c.Y - 900), terrain.Elevation(c.X, c.Y) + D(opts, "altitude", 900), 45, D(opts, "pitch", -45));
+                var frame = new SyntheticCamera(projector).Render(pose, truth);
+                var mask = new ColorFireDetector().Detect(frame);
+                var pair = new RgbImage(frame.Width * 2 + 8, frame.Height);
+                for (var y = 0; y < frame.Height; y++)
+                for (var x = 0; x < frame.Width; x++)
+                {
+                    pair[x, y] = frame[x, y];
+                    var (r, g, b) = frame[x, y];
+                    pair[x + frame.Width + 8, y] = mask[x, y] ? ((byte)(r / 3), (byte)(g / 3 + 90), (byte)Math.Min(255, b / 3 + 170)) : (r, g, b);
+                }
+                for (var y = 0; y < frame.Height; y++) for (var x = frame.Width; x < frame.Width + 8; x++) pair[x, y] = (255, 255, 255);
+                pair.WritePng(args[4]);
+                Console.WriteLine($"Wrote {args[4]}: {mask.Count} of {frame.Width * frame.Height} pixels detected as fire or fresh burn scar.");
+                return 0;
+            }
             default:
                 return Usage();
         }
@@ -150,6 +175,7 @@ public static class DroneCommands
             drone survey <scenario.yaml> <video.MP4> [--srt f] [--log airdata.csv] [--heading deg] [--pitch deg]
                          [--fps n] [--hfov deg] [--model detector.onnx] [--fire-classes 0,1] [--out f] [--publish incident-id]
             drone flight <scenario.yaml> <minute> <out-dir> [--altitude m] [--seconds n]
+            drone frame  <scenario.yaml> <minute> <out.png> [--altitude m] [--pitch deg]
             """);
         return 2;
     }

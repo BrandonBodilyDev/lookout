@@ -209,4 +209,61 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
         var observer = await fx.Client("observer").PutAsJsonAsync($"/api/incidents/{incident}/routes/ER-1", new { name = "x", safetyZone = "SZ-1", path, version }, ct);
         Assert.Equal(HttpStatusCode.Forbidden, observer.StatusCode);
     }
+
+    [Fact]
+    public async Task Phone_positions_go_through_the_same_16_byte_report_and_only_for_your_own_crew()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var incident = await CreateIncidentAsync();
+        var body = new { lat = 37.3591, lon = -113.62, battery = 80, sequence = 1 };
+
+        var own = await fx.Client("crew", "ALPHA").PostAsJsonAsync($"/api/incidents/{incident}/crews/ALPHA/position", body, ct);
+        Assert.Equal(HttpStatusCode.Accepted, own.StatusCode);
+        Assert.Equal(16, (await own.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("bytes").GetInt32());
+
+        var other = await fx.Client("crew", "ALPHA").PostAsJsonAsync($"/api/incidents/{incident}/crews/BRAVO/position", body, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, other.StatusCode);
+
+        var observer = await fx.Client("observer").PostAsJsonAsync($"/api/incidents/{incident}/crews/ALPHA/position", body, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, observer.StatusCode);
+
+        var bad = await fx.Client("ic").PostAsJsonAsync($"/api/incidents/{incident}/crews/ALPHA/position", new { lat = 137.0, lon = 0.0 }, ct);
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+    }
+
+    [Fact]
+    public async Task Compression_and_retention_policies_are_in_place()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var conn = new NpgsqlConnection(fx.ConnectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT hypertable_name, proc_name FROM timescaledb_information.jobs WHERE hypertable_name IS NOT NULL ORDER BY 1, 2", conn);
+        var jobs = new List<string>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) jobs.Add($"{r.GetString(0)}:{r.GetString(1)}");
+        Assert.Equal(["audit_events:policy_compression", "crew_fixes:policy_compression", "crew_fixes:policy_retention"], jobs);
+    }
+
+    [Fact]
+    public async Task After_action_summary_and_audit_csv()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var incident = await CreateIncidentAsync();
+        var alert = await RaiseSentAlertAsync(incident, "ALPHA");
+        await fx.Client("crew", "ALPHA").PostAsJsonAsync($"/api/incidents/{incident}/alerts/{alert.Id}/ack", new { version = alert.Version }, ct);
+
+        var summary = await fx.Client("observer").GetFromJsonAsync<JsonElement>($"/api/incidents/{incident}/summary", ct);
+        var alpha = summary.GetProperty("crews").EnumerateArray().Single(c => c.GetProperty("crewId").GetString() == "ALPHA");
+        Assert.Equal(1, alpha.GetProperty("warningsSent").GetInt32());
+        Assert.Equal(1, alpha.GetProperty("acknowledged").GetInt32());
+        Assert.Equal(1, summary.GetProperty("link").GetProperty("downlinkMessages").GetInt32());
+        Assert.Equal(0, summary.GetProperty("openAlerts").GetInt32());
+
+        var csv = await fx.Client("ic").GetStringAsync($"/api/incidents/{incident}/audit.csv", ct);
+        var lines = csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("time_utc,type,crew,alert_id,actor,role,details", lines[0]);
+        Assert.Contains(lines, l => l.Contains(",alert.acknowledged,ALPHA,"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await fx.Client("crew", "ALPHA").GetAsync($"/api/incidents/{incident}/audit.csv", ct)).StatusCode);
+    }
 }

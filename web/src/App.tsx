@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { ReplayView } from "./ReplayView";
 import { LiveView } from "./LiveView";
+import { CrewView } from "./CrewView";
 
-type Mode = "replay" | "live";
+type Mode = "replay" | "live" | "crew";
 
 export default function App() {
   const [mode, setMode] = useState<Mode>(() => {
     const p = new URLSearchParams(window.location.search);
-    return p.get("mode") === "live" || p.has("incident") ? "live" : "replay";
+    const m = p.get("mode");
+    return m === "crew" ? "crew" : m === "live" || p.has("incident") ? "live" : "replay";
   });
 
   const switchTo = (m: Mode) => {
@@ -27,9 +29,11 @@ export default function App() {
       <nav className="tabs" aria-label="Mode">
         <button className={mode === "replay" ? "active" : ""} aria-pressed={mode === "replay"} onClick={() => switchTo("replay")}>Replay</button>
         <button className={mode === "live" ? "active" : ""} aria-pressed={mode === "live"} onClick={() => switchTo("live")}>Live</button>
+        <button className={mode === "crew" ? "active" : ""} aria-pressed={mode === "crew"} onClick={() => switchTo("crew")}>Crew</button>
       </nav>
     </header>
   );
 
+  if (mode === "crew") return <CrewView header={header} />;
   return mode === "replay" ? <ReplayView header={header} /> : <LiveView header={header} />;
 }

@@ -57,3 +57,16 @@ Every number here is a knob in the scenario files, never hard-coded in the engin
 7. When the wind shifts, what is the first sign on the ground, and how long between that sign and the fire changing direction?
 8. What would make him trust an automated warning, and what would make him ignore it?
 9. Any story (South Canyon, Yarnell, or a local one) he would want the demo scenario to resemble, told respectfully.
+
+## Drone survey
+| Parameter | Default | Source / note |
+|---|---|---|
+| Mavic Mini horizontal field of view | 71.5° (1080p video assumed to use the full sensor width) | Derived from the spec sheet: 83° diagonal, 24 mm equivalent, 1/2.3" sensor. Not calibrated: fly over a ground target of known size and correct it. |
+| Subtitle-track position precision | 4 decimal places, about 11 m | Mavic Mini .SRT. Newer DJI drones write 6 decimals. |
+| Camera height | take-off ground elevation + SRT "H" | "H" is height above the take-off point (barometric). Ground under the take-off point comes from the terrain grid. |
+| Flame rule | R > 135, R ≥ G > B, S ≥ (255 − R) · 60 / 135, and Cr − Cb ≥ 40 | Chen, Wu and Chiou 2004 (RGB) plus Celik and Demirel 2009 (chrominance). Chen alone accepts dry tan grass. |
+| Burn-scar rule | max(R, G, B) < 70 and saturation < 70, only when connected to flame | Keeps shadows from being mapped as burned ground. |
+| Minimum detection region | 12 pixels | Drops sensor noise and isolated red specks. |
+| Cell marking | at least 2 fire pixels in a 30 m cell in one frame | Pixels are sampled every second row and column. |
+| ONNX detector score threshold | 0.4 | For DETR-family models with sigmoid class scores. Tune on held-out aerial frames. |
+| Virtual survey camera (simulation) | 1,800 m above ground, straight down, 800 × 600 px | About 2.6 × 1.9 km per frame, about 3 m per pixel. Represents an incident-awareness aircraft or Group 3 UAS, not a Mavic Mini. |

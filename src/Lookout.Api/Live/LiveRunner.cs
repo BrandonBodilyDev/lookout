@@ -150,6 +150,9 @@ public sealed class LiveRunner(
             case AlertClosed c when _incidents.TryGetValue(s.IncidentId, out var rt2):
                 rt2.Governor.Clear(c.CrewId, c.AlertId);
                 break;
+            case UplinkReceived u when _incidents.TryGetValue(s.IncidentId, out var rt3):
+                await HandleUplinkAsync(rt3, u.CrewId, u.Payload, ct);
+                break;
         }
     }
 

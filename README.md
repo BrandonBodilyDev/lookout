@@ -6,7 +6,7 @@ The name comes from LCES (Lookouts, Communications, Escape routes, Safety zones)
 
 ![Replay of the demo scenario: the wind shifts at 14:20, Crew Alpha is told to leave, and walks to the safety zone before the fire reaches their route](docs/images/replay.gif)
 
-> **Status: Phase 1 of 3, simulation only.** This is a portfolio project. It runs scripted scenarios on real terrain, live or as a replay. It is not a validated fire behavior model and must not be used for real operational decisions.
+> **Status: Phase 1 done, Phase 2 built and tested on synthetic footage.** This is a portfolio project. It runs scripted scenarios on real terrain, live or as a replay, and its drone pipeline has not yet been run on real fire footage. It is not a validated fire behavior model and must not be used for real operational decisions.
 
 ## What it does
 
@@ -58,6 +58,45 @@ During the live run of the demo:
 - Bravo's COMMS LOST warning is sent while its device is out of contact. The governor repeats it, the device receives it when contact returns, and acknowledges it.
 - Alpha's CRITICAL goes out on the update after the wind shift and is acknowledged by the crew's device seconds later.
 - If a crew never acknowledges a WARNING or CRITICAL, the alert escalates to the incident commander after 3 scenario minutes, and the IC can acknowledge on the crew's behalf.
+
+### The crew's phone
+
+The Crew tab is what a crew member sees. It shows one status card colored by alert level, one large Acknowledge button for the current warning, and the last few messages.
+
+<img src="docs/images/crew-phone.png" alt="Crew Alpha's phone at 14:20: a red LEAVE NOW card and the CRITICAL alert waiting for acknowledgement" width="300">
+
+- **Acknowledgements** use the same workflow, roles and version checks as the dashboard. A crew can acknowledge only its own alerts.
+- **Phone GPS is optional.** A phone without a satellite modem posts its position over HTTPS. The API packs it into the same 16-byte position report a tracker sends over the link and feeds it through the same code path.
+- **Alerts vibrate and raise a notification while the page is open.** Waking a closed phone needs Web Push, which on iPhone works only for web apps added to the home screen. This demo does not set up push, and says so on the screen.
+
+## Drone input
+
+The fire front can come from a drone instead of the scenario. The pipeline, in [`src/Lookout.Drone`](src/Lookout.Drone), works on an ordinary video file:
+
+1. **Track.** Read the DJI subtitle track: one GPS fix and height per second on the original Mavic Mini, longitude first, 4 decimal places (about 11 m). ffmpeg extracts it from the MP4.
+2. **Pose.** Heading and gimbal pitch are not in the subtitle track. They come from an Airdata-style flight-log CSV, or are given on the command line for a straight-down survey.
+3. **Detect.** Find fire in each frame. The default detector needs no trained weights: flame pixels must pass the RGB rule of Chen et al. (2004) and the chrominance rule of Celik and Demirel (2009). The chrominance rule is there because Chen's rule alone accepts dry tan grass, which covers most of the ground in desert scrub. A DETR-family ONNX model can be used instead, run through ONNX Runtime in .NET.
+4. **Project.** Turn fire pixels into ground positions with a pinhole camera model, intersecting each ray with the terrain grid.
+5. **Map.** Mark burned cells on the 30 m grid, accumulate them across frames, and polygonize. The result is the same fire-front message the engine already consumes, and it can be published straight into a live incident.
+
+```bash
+dotnet run --project src/Lookout.Sim -- drone survey scenarios/pine-valley-wind-shift.yaml DJI_0001.MP4 --heading 0 --pitch -90 --publish <incident-id>
+```
+
+**How it is tested without real footage.** A synthetic camera renders the scenario's true fire as an aerial image: flame along the edge, burn scar inside, vegetation outside. Two tests score the pipeline against the truth:
+
+![A synthetic oblique survey frame of the demo fire, and the same frame with the detector's fire and burn-scar pixels tinted blue](docs/images/synthetic-survey.png)
+
+| Test | Result required |
+|---|---|
+| One rendered frame, detected and mapped | IoU above 0.85 with the true fire |
+| A generated MP4 with a Mavic-Mini-format subtitle track, through ffmpeg and the full survey | IoU above 0.75, including video compression and 4-decimal GPS |
+
+With the virtual camera and detector feeding the engine in a full replay (`dotnet run --project src/Lookout.Sim -- --camera`), the alert timeline is unchanged: CRITICAL at 14:20, 8 minutes before the cut. Synthetic images are far easier than real smoke, glare and shadow, so this shows the geometry and plumbing are right, not that detection is solved.
+
+**What a Mavic Mini can and cannot do here.** At its 120 m ceiling, a straight-down frame covers about 170 by 100 m. That is enough to map a fire-pit test or the edge of a small burn, not a 2 km fire. The field simulator's camera mode uses a virtual camera at 1,800 m, where one frame covers about 2.6 by 1.9 km. That altitude matches an incident-awareness aircraft or a Group 3 UAS, not a consumer drone. The original Mavic Mini also reached end of service in April 2026, and it stands in here for a production airframe.
+
+**Recommended trained weights.** Use Apache-2.0 models such as RF-DETR fire detectors. Ultralytics YOLO weights are AGPL-3.0, and using them would change this project's license. No model or dataset is committed to this repo.
 
 ## How it works
 
@@ -185,7 +224,7 @@ Migrations are EF Core, with one hand-written migration for the hypertables and 
 - **Fuel.** Spread uses one head-fire rate per weather phase over uniform fuel. Terrain affects spread through slope only. The head-fire rate is a scenario input, never computed from fuel models or fuel moisture.
 - **Spotting, crown fire, fire acceleration, diurnal winds, and suppression.**
 - **Wind forecasts.** Only observed wind is used: from the field, or from the nearest National Weather Service station when an incident is set to NWS.
-- **Real drone detection.** The drone survey is the scenario's simulated fire. Phase 2 replaces it with a detector.
+- **Real-world detection accuracy.** The detectors have only been scored on synthetic imagery. Smoke, glare, shadows and red objects will cause errors on real footage.
 
 ## Run it
 
@@ -224,7 +263,7 @@ MQTT_USER=lookout MQTT_PASSWORD=lookout-dev-mqtt CLOCK_RATE=8 dotnet run --proje
 npm --prefix web install && npm --prefix web run dev
 ```
 
-The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add `?t=20` to a replay URL to open it at minute 20. Set `NO_ACK_CREWS=BRAVO` on the field simulator to watch an alert escalate.
+The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add `?t=20` to a replay URL to open it at minute 20. On the field simulator, set `NO_ACK_CREWS=BRAVO` to watch an alert escalate, or `DRONE_MODE=camera` to feed the engine detected fronts instead of the true fire.
 
 ## Project layout
 
@@ -232,20 +271,23 @@ The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add
 |---|---|
 | `src/Lookout.Engine` | Terrain grid, spread models, travel rates, rules, alert state machine, scenario loader, replay simulator. No web or database dependencies. |
 | `src/Lookout.Link` | Wire formats, link governor, MQTT connection. Shared by the server and the field simulator. |
+| `src/Lookout.Drone` | Subtitle-track parser, camera model and ground projection, fire detectors, burned-area mapper, video survey, synthetic camera and flight. |
 | `src/Lookout.Api` | ASP.NET Core: replay API, live runner, alert and incident services, EF Core data model, SignalR hub, NWS client, CoT export. |
 | `src/Lookout.Field` | Field simulator: plays a scenario's truth over MQTT and simulates crew devices. |
-| `src/Lookout.Sim` | Console runner for replays, and the `dem` command that builds a scenario's terrain grid. |
+| `src/Lookout.Sim` | Console runner for replays (add `--camera` to put the drone pipeline in the loop), the `drone` commands, and the `dem` command that builds a scenario's terrain grid. |
 | `tests/Lookout.Engine.Tests` | Formulas, grid oracles, travel rates, latch, state machine, wire formats, governor, demo acceptance. |
 | `tests/Lookout.Api.Tests` | Integration tests on a TimescaleDB container, plus CoT and NWS parsing. |
 | `web` | Vite + React + TypeScript dashboard on MapLibre GL JS, with Replay and Live modes. |
 | `scenarios` | Scenario YAML files and their terrain grids. |
 | `deploy/mosquitto` | Broker configuration with a development password file. |
+| `docs/assumptions.md` | Every default parameter, its source, and the open questions for a working firefighter. |
+| `docs/architecture.md` | Design decisions: what was chosen, why, and what it costs. |
 
 ## Roadmap
 
 1. **Phase 1, done.** Terrain-aware engine, live incidents over MQTT, the link governor, the acknowledgement workflow, the audit trail, TAK export, and NWS weather.
-2. **Phase 2, next.** Drone input: a flight track parsed from DJI `.SRT` logs, and a pretrained fire detector run on public drone footage of prescribed burns, producing the fire-front polygon the scenario currently scripts.
-3. **Phase 3.** A live drone video feed on Android, on-device inference, and a crew phone app with real GPS and push alerts.
+2. **Phase 2, built.** The drone pipeline described above: subtitle tracks, ground projection over terrain, color and ONNX detectors, burned-area mapping, and publishing into live incidents. Still to do: run it on real footage, either FLAME 2 prescribed-burn video or a legal fire-pit flight, and calibrate the Mavic Mini's field of view against a ground target.
+3. **Phase 3, started.** Done: the crew phone view with acknowledgements and optional phone GPS. Still to do: Web Push so alerts wake a closed phone, a live drone video feed through DJI Mobile SDK 4 on Android, and on-device inference.
 
 ## Drone safety
 
@@ -257,6 +299,8 @@ Lookout never needs a drone near a real fire. Drones near wildfires ground firef
 - Finney, M. A. (1998). *FARSITE: Fire Area Simulator, model development and evaluation.* USDA Forest Service RMRS-RP-4.
 - Finney, M. A. (2002). Fire growth using minimum travel time methods. *Canadian Journal of Forest Research*, 32(8), 1420–1424.
 - Andrews, P. L. (2018). *The Rothermel surface fire spread model and associated developments.* USDA Forest Service RMRS-GTR-371.
+- Chen, T.-H., Wu, P.-H., & Chiou, Y.-C. (2004). An early fire-detection method based on image processing. *IEEE International Conference on Image Processing*, 1707–1710.
+- Celik, T., & Demirel, H. (2009). Fire detection in video sequences using a generic color model. *Fire Safety Journal*, 44(2), 147–158.
 - Fryer, G. K., Dennison, P. E., & Cova, T. J. (2013). Wildland firefighter entrapment avoidance: modelling evacuation triggers. *International Journal of Wildland Fire*, 22(7), 883–893.
 - Sullivan, P. R., Campbell, M. J., Dennison, P. E., Brewer, S. C., & Butler, B. W. (2020). Modeling wildland firefighter travel rates by terrain slope: results from GPS-tracking of Type 1 crew movement. *Fire*, 3(3), 52.
 - NWCG (2025). *Incident Response Pocket Guide*, PMS 461: LCES and the 18 Watch Out Situations.

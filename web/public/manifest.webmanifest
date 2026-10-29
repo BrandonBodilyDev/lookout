@@ -1,0 +1,10 @@
+{
+  "name": "Lookout",
+  "short_name": "Lookout",
+  "description": "Escape-route cut-off warnings for wildland fire crews",
+  "start_url": "/?mode=crew",
+  "display": "standalone",
+  "background_color": "#1c1917",
+  "theme_color": "#e8542f",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

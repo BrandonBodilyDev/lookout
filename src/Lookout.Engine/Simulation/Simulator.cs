@@ -13,8 +13,13 @@ namespace Lookout.Engine.Simulation;
 /// </summary>
 public static class Simulator
 {
-    public static SimulationResult Run(Scenario scenario)
+    /// <param name="observedFront">
+    /// What the drone reports at a scenario minute. Defaults to the scenario's true fire; the drone
+    /// pipeline passes a camera-and-detector survey here to measure what detection costs.
+    /// </param>
+    public static SimulationResult Run(Scenario scenario, Func<double, Geometry>? observedFront = null)
     {
+        observedFront ??= scenario.Fire.FrontAt;
         var grid = scenario.Terrain is { } terrain ? new SpreadGrid(terrain) : null;
         var profiles = scenario.Crews.ToDictionary(
             c => c.Id, c => new RouteProfile(scenario.Route(c.RouteId), c.Pace));
@@ -28,7 +33,8 @@ public static class Simulator
         for (var i = 0; i <= steps; i++)
         {
             var t = i * scenario.StepMin;
-            var front = scenario.Fire.FrontAt(t);
+            var front = observedFront(t);
+            var truthFront = scenario.Fire.FrontAt(t);
             var wind = WindPhases.At(scenario.Wind, t).Conditions;
             var crewStates = new List<CrewState>();
 
@@ -43,7 +49,7 @@ public static class Simulator
                 var truth = crew.TruePositionAt(t);
                 crewStates.Add(new CrewState(
                     crew.Id, truth, known, fix?.T, a.EnRoute, a.Cutoff, a.Findings, a.RawLevel,
-                    BurnedOver: !front.IsEmpty && front.Contains(front.Factory.CreatePoint(truth))));
+                    BurnedOver: !truthFront.IsEmpty && truthFront.Contains(truthFront.Factory.CreatePoint(truth))));
 
                 if (a.Change is { } c)
                     alerts.Add(new AlertEvent(t, scenario.Start.AddMinutes(t), crew.Id, profile.Route.Id, c.From, c.To, c.Text, c.Bytes));
