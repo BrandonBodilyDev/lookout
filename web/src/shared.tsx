@@ -74,7 +74,8 @@ export function CrewCard({ crew, meta }: { crew: CrewView; meta: { name: string;
       {crew.routeMargins && crew.routeMargins.length > 1 && !crew.inSafetyZone && (
         <p className="route-margins">
           {crew.routeMargins.map((r) => (
-            <span key={r.routeId} className={r.routeId === crew.routeId ? "best" : r.marginMin !== null && r.marginMin < 0 ? "cut" : ""}>
+            // Under the 10-minute buffer an alternate is unsafe; below zero the fire beats the crew there.
+            <span key={r.routeId} className={r.routeId === crew.routeId ? "best" : r.marginMin !== null && r.marginMin < 0 ? "cut" : r.marginMin !== null && r.marginMin < 10 ? "unsafe" : ""}>
               {r.routeId} {r.marginMin === null ? "safe" : r.marginMin < 0 ? "cut" : `${Math.round(r.marginMin)} min`}
             </span>
           ))}

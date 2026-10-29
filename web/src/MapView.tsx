@@ -79,7 +79,8 @@ function layoutData(layout: MapLayout, state: MapState) {
     routes: fc(
       layout.routes.map((r) => ({
         type: "Feature",
-        properties: { id: r.id, level: levelByRoute.get(r.id) ?? "none" },
+        // A route no crew is using right now (an unchosen alternate) is drawn grey, never "safe" green.
+        properties: { id: r.id, level: levelByRoute.get(r.id) ?? "inactive" },
         geometry: { type: "LineString", coordinates: r.path.map(([lon, lat]) => [lon, lat]) },
       })),
     ),
@@ -148,6 +149,7 @@ const levelColor = [
   "watch", LEVEL_COLOR.watch,
   "warning", LEVEL_COLOR.warning,
   "critical", LEVEL_COLOR.critical,
+  "inactive", "#8a8580",
   LEVEL_COLOR.none,
 ] as unknown as maplibregl.DataDrivenPropertyValueSpecification<string>;
 
@@ -365,7 +367,8 @@ function Legend() {
       <ul>
         <li><span className="key key-fire" />Burned area (latest survey)</li>
         <li><span className="key key-leave" />Leave-now zone: fire inside means go</li>
-        <li><span className="key key-route" />Escape route, coloured by crew level</li>
+        <li><span className="key key-route" />Escape route in use, coloured by crew level</li>
+        <li><span className="key key-route-alt" />Alternate route not in use</li>
         <li><span className="key key-zone" />Safety zone</li>
         <li><span className="key key-cut" />Where the fire would cut the route</li>
         <li><span className="key key-crew" />Crew at last fix (faded when stale)</li>

@@ -111,3 +111,12 @@ Short records of the choices that shape Lookout, why they were made, and what th
 **Scope.** Crew tokens carry the incident they were issued for, because crew ids such as ALPHA repeat across incidents; every incident endpoint and the live hub refuse a crew token from another incident. On the broker, the server and the field simulator have separate accounts, and an ACL lets a real crew device publish only on its own uplink and read only its own downlink.
 
 **Cost.** Dev auth must never be enabled on a reachable deployment. Docker compose binds every port to localhost, the API logs a warning whenever dev sign-in is on outside Development, and startup refuses to run live mode without a signing key of at least 32 characters.
+
+## 14. nginx resolves the API on every request
+
+**Decision.** nginx proxies to a variable upstream through Docker's DNS resolver, re-resolving `api` every 10 seconds.
+
+**Why.** With a fixed `proxy_pass http://api:8080`, nginx resolves the name once at startup. Recreating the API container gave it a new address, and the dashboard returned 502 until nginx itself restarted. Found while recreating the API to enable telemetry.
+
+**Cost.** One DNS lookup every 10 seconds. A WebSocket that is already open stays on the old connection until it reconnects, which SignalR does on its own.
+

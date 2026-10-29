@@ -265,3 +265,5 @@ details.card[open] summary { margin-bottom: 8px; }
 .route-margins span { padding: 2px 6px; border-radius: 4px; background: var(--border); font-variant-numeric: tabular-nums; }
 .route-margins .best { background: color-mix(in srgb, var(--none) 25%, transparent); font-weight: 700; }
 .route-margins .cut { background: var(--critical); color: #fff; }
+.route-margins .unsafe { background: var(--warning); color: #fff; }
+.key-route-alt { height: 4px; background: repeating-linear-gradient(90deg, #8a8580 0 6px, transparent 6px 9px); }
