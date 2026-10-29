@@ -48,6 +48,8 @@ public static class AfterAction
                     c.Name,
                     AlertsByLevel = mine.GroupBy(a => a.Level.ToString().ToLowerInvariant()).ToDictionary(g => g.Key, g => g.Count()),
                     WarningsSent = needAck.Count,
+                    // Raised but never delivered on the link (no device, broker down); acked or escalated by other means if at all.
+                    WarningsNotDelivered = mine.Count(a => a.RequiresAck && a.SentAt is null && a.State is not (AlertState.Superseded or AlertState.Cancelled)),
                     Acknowledged = acked.Count,
                     AcknowledgedByIc = acked.Count(a => icAcked.Contains(a.Id)),
                     Escalated = mine.Count(a => a.EscalatedAt is not null),

@@ -199,6 +199,7 @@ stateDiagram-v2
     Queued --> Sent: governor transmits
     Queued --> Superseded: newer alert for crew
     Sent --> Acknowledged: crew device or IC
+    Queued --> Acknowledged: crew app or IC
     Sent --> Escalated: no ack in 3 min
     Queued --> Escalated: not delivered in 3 min
     Escalated --> Acknowledged: crew device or IC
@@ -214,7 +215,7 @@ stateDiagram-v2
 
 - **Every transition is listed in one place,** [`AlertStateMachine.cs`](src/Lookout.Engine/Workflow/AlertStateMachine.cs). Anything not listed is refused with HTTP 409.
 - **Optimistic concurrency.** Alerts, routes and safety zones carry PostgreSQL's `xmin` as a row version. A client must send the version it saw. A stale version gets a 409 with the current state, and two simultaneous acknowledgements resolve to exactly one success.
-- **Undelivered is escalated too.** A WARNING or CRITICAL the link cannot deliver, because the crew has no device or the broker is down, escalates to the incident commander after the same 3 minutes. The governor keeps trying, and a late first delivery is recorded in the audit trail.
+- **Undelivered is escalated too.** A WARNING or CRITICAL the link cannot deliver, because the crew has no device or the broker is down, escalates to the incident commander after the same 3 minutes. The governor keeps trying, and a late first delivery is recorded in the audit trail. The crew can still acknowledge it from the phone app, and the IC can acknowledge it for them after reaching them by radio. The after-action summary counts warnings the link never delivered.
 - **Roles.** The incident commander can start incidents, acknowledge for any crew, cancel with a reason, and redraw routes and safety zones. A crew device can acknowledge only its own alerts. An observer can only watch.
 - **Audit.** Each alert change and its audit event are saved in one transaction. The audit table is a TimescaleDB hypertable, and a database trigger rejects UPDATE, DELETE and TRUNCATE. The API also connects as a restricted role that may only insert into and read the audit table; migrations run as the owner.
 

@@ -82,6 +82,44 @@ public sealed class DeviceTests(LookoutAppFixture fx)
         var moved = await db.AuditEvents.AsNoTracking().SingleAsync(e => e.IncidentId == second && e.Type == "device.assigned", ct);
         Assert.Equal(first, moved.Details!.RootElement.GetProperty("from").GetProperty("IncidentId").GetGuid());
         Assert.Equal(1, await db.AuditEvents.CountAsync(e => e.IncidentId == first && e.Type == "device.assigned", ct));
+        // The incident that lost the device records it in its own trail.
+        var lost = await db.AuditEvents.AsNoTracking().SingleAsync(e => e.IncidentId == first && e.Type == "device.unassigned", ct);
+        Assert.Equal("ALPHA", lost.CrewId);
+        Assert.Equal(second, lost.Details!.RootElement.GetProperty("movedTo").GetProperty("incidentId").GetGuid());
+    }
+
+    [Fact]
+    public async Task Devices_cannot_be_assigned_in_a_closed_incident()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var incident = await CreateIncidentAsync();
+        await using (var scope = fx.App.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
+            await db.Incidents.Where(i => i.Id == incident).ExecuteUpdateAsync(u => u.SetProperty(i => i.Status, IncidentStatus.Closed), ct);
+        }
+        var res = await fx.Client("ic").PutAsync($"/api/incidents/{incident}/crews/ALPHA/devices/{NewDeviceId()}", null, ct);
+        Assert.Equal(HttpStatusCode.Conflict, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Simultaneous_assignments_of_one_device_never_fail_with_a_server_error()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var incident = await CreateIncidentAsync();
+        var device = NewDeviceId();
+        var ic = fx.Client("ic");
+        var results = await Task.WhenAll(Enumerable.Range(0, 6).Select(i =>
+            ic.PutAsync($"/api/incidents/{incident}/crews/{(i % 2 == 0 ? "ALPHA" : "BRAVO")}/devices/{device}", null, ct)));
+        Assert.All(results, r => Assert.Contains(r.StatusCode, new[] { HttpStatusCode.OK, HttpStatusCode.Conflict }));
+        Assert.Contains(results, r => r.StatusCode == HttpStatusCode.OK);
+
+        await using var scope = fx.App.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
+        Assert.Equal(1, await db.Devices.CountAsync(d => d.DeviceId == device, ct));
+        // One audit entry per successful assignment, none for the refused ones.
+        Assert.Equal(results.Count(r => r.StatusCode == HttpStatusCode.OK),
+            await db.AuditEvents.CountAsync(e => e.IncidentId == incident && e.Type == "device.assigned", ct));
     }
 
     [Fact]

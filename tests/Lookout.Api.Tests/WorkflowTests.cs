@@ -167,6 +167,22 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
     }
 
     [Fact]
+    public async Task A_crew_can_acknowledge_an_alert_the_link_has_not_delivered()
+    {
+        // A crew with no link device still sees the alert by push or in the app, and must be able to answer it.
+        var ct = TestContext.Current.CancellationToken;
+        var incident = await CreateIncidentAsync();
+        AlertRecord queued;
+        await using (var scope = fx.App.Services.CreateAsyncScope())
+            queued = (await scope.ServiceProvider.GetRequiredService<AlertService>().RaiseAsync(incident, "ALPHA", AlertLevel.Critical, "ALPHA CRITICAL: test", 20, ct)).Alert;
+        Assert.Equal(Engine.Workflow.AlertState.Queued, queued.State);
+
+        var res = await fx.Client("crew", "ALPHA", incident).PostAsJsonAsync($"/api/incidents/{incident}/alerts/{queued.Id}/ack", new { version = queued.Version }, ct);
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Equal("acknowledged", (await res.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("state").GetString());
+    }
+
+    [Fact]
     public async Task Device_ack_by_link_sequence_is_idempotent()
     {
         var ct = TestContext.Current.CancellationToken;

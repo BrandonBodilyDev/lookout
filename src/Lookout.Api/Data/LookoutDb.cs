@@ -81,6 +81,7 @@ public sealed class LookoutDb(DbContextOptions<LookoutDb> options) : DbContext(o
         {
             e.ToTable("devices");
             e.HasKey(x => x.DeviceId);
+            e.Property(x => x.Version).IsRowVersion();
             e.Property(x => x.DeviceId).HasMaxLength(32);
             e.Property(x => x.AssignedBy).HasMaxLength(64);
             e.HasIndex(x => new { x.IncidentId, x.CrewId });

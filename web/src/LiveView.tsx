@@ -200,6 +200,7 @@ function Incident(props: { id: string; token: string; role: Role; header: React.
     hub.on("frame", (f: LiveFrame) => setFrame(f));
     hub.on("alert", (a: LiveAlert) => upsert(a));
     hub.on("closed", () => setClosed(true));
+    hub.on("devices", () => { void loadDetail(); });
     const update = () => setConnection(hub.state);
     hub.onreconnecting(update);
     hub.onreconnected(async () => { update(); const f = await hub.invoke<LiveFrame | null>("Join", id); if (f) setFrame(f); });
@@ -340,7 +341,7 @@ function AlertsPanel(props: { alerts: LiveAlert[]; open: number; role: Role; onA
                 {new Date(a.raisedAt).toLocaleTimeString()}
                 {a.acknowledgedBy && ` · acknowledged by ${a.acknowledgedBy}`}
                 {a.cancelReason && ` · cancelled: ${a.cancelReason}`}
-                {a.state === "escalated" && " · no acknowledgement from the crew: IC action needed"}
+                {a.state === "escalated" && (a.sentAt ? " · no acknowledgement from the crew: IC action needed" : " · not delivered on the link: IC action needed")}
               </div>
               {props.role === "ic" && a.requiresAck && isOpen(a) && (
                 cancelling === a.id ? (
@@ -351,7 +352,7 @@ function AlertsPanel(props: { alerts: LiveAlert[]; open: number; role: Role; onA
                   </div>
                 ) : (
                   <div className="button-row">
-                    {a.state !== "queued" && <button className="btn small primary" onClick={() => props.onAct(a, "ack")}>Acknowledge for crew</button>}
+                    <button className="btn small primary" onClick={() => props.onAct(a, "ack")}>Acknowledge for crew</button>
                     <button className="btn small" onClick={() => setCancelling(a.id)}>Cancel…</button>
                   </div>
                 )
@@ -438,7 +439,10 @@ function DeviceTools({ detail, token, onChanged }: { detail: IncidentDetail; tok
           {assigned.map((a) => (
             <li key={a.device}>
               <span><b>{a.crew}</b> {a.device}</span>
-              <button className="btn small" onClick={() => call("DELETE", a.crew, a.device, `Device ${a.device} removed from ${a.crew}.`)}>Remove</button>
+              <button className="btn small" onClick={() => {
+                if (window.confirm(`Remove ${a.device} from ${a.crew}? Its reports will be ignored and alerts will no longer reach it.`))
+                  void call("DELETE", a.crew, a.device, `Device ${a.device} removed from ${a.crew}.`);
+              }}>Remove</button>
             </li>
           ))}
         </ul>
@@ -530,7 +534,7 @@ function AuditLog({ id, token, refreshKey }: { id: string; token: string; refres
 
 interface Summary {
   crews: {
-    crewId: string; name: string; alertsByLevel: Record<string, number>; warningsSent: number; acknowledged: number;
+    crewId: string; name: string; alertsByLevel: Record<string, number>; warningsSent: number; warningsNotDelivered: number; acknowledged: number;
     acknowledgedByIc: number; escalated: number; medianAckScenarioMin: number | null; maxAckScenarioMin: number | null;
     fixesReceived: number; longestFixGapScenarioMin: number | null;
   }[];
@@ -566,12 +570,13 @@ function AfterActionPanel({ id, token, refreshKey }: { id: string; token: string
       {!summary ? <p className="muted">Loading…</p> : (
         <>
           <table className="wx-table">
-            <thead><tr><th>Crew</th><th>Warnings</th><th>Acked</th><th>Median ack</th><th>Escalated</th><th>Longest fix gap</th></tr></thead>
+            <thead><tr><th>Crew</th><th>Warnings</th><th>Not delivered</th><th>Acked</th><th>Median ack</th><th>Escalated</th><th>Longest fix gap</th></tr></thead>
             <tbody>
               {summary.crews.map((c) => (
                 <tr key={c.crewId}>
                   <td>{c.crewId}</td>
                   <td>{c.warningsSent}</td>
+                  <td>{c.warningsNotDelivered}</td>
                   <td>{c.acknowledged}{c.acknowledgedByIc > 0 && ` (${c.acknowledgedByIc} by IC)`}</td>
                   <td>{min(c.medianAckScenarioMin)}</td>
                   <td>{c.escalated}</td>

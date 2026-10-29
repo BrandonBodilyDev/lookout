@@ -160,6 +160,10 @@ public static class LiveEndpoints
             if (!Link.Topics.IsValidDeviceId(deviceId))
                 return Results.Problem("Device ids are 3 to 32 letters, digits or dashes.", statusCode: StatusCodes.Status400BadRequest);
             crewId = crewId.ToUpperInvariant();
+            var status = await db.Incidents.Where(i => i.Id == id).Select(i => (IncidentStatus?)i.Status).SingleOrDefaultAsync(ct)
+                ?? throw new NotFoundException($"Incident {id}");
+            // A closed incident cannot use a device, and assigning one there would take it from a live crew.
+            if (status != IncidentStatus.Running) throw new ConflictException("Devices can only be assigned in a running incident.");
             if (!await db.Crews.AnyAsync(c => c.IncidentId == id && c.CrewId == crewId, ct)) throw new NotFoundException($"Crew {crewId}");
             var actor = Actor.From(http.User);
             var now = clock.GetUtcNow();
@@ -172,8 +176,21 @@ public static class LiveEndpoints
                 Time = now, IncidentId = id, CrewId = crewId, Type = "device.assigned", Actor = actor.Name, Role = actor.Role,
                 Details = System.Text.Json.JsonSerializer.SerializeToDocument(new { deviceId, from }),
             });
-            await db.SaveChangesAsync(ct);
+            // Moved from another incident: that incident's own trail must show its crew lost the device.
+            if (from is not null && from.IncidentId != id)
+                db.AuditEvents.Add(new AuditEvent
+                {
+                    Time = now, IncidentId = from.IncidentId, CrewId = from.CrewId, Type = "device.unassigned", Actor = actor.Name, Role = actor.Role,
+                    Details = System.Text.Json.JsonSerializer.SerializeToDocument(new { deviceId, movedTo = new { incidentId = id, crewId } }),
+                });
+            try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateException)
+            {
+                // Someone else assigned or moved this device at the same moment (primary key or xmin).
+                throw new ConflictException($"Device {deviceId} was changed by someone else at the same time; reload and try again.");
+            }
             signals.Post(new DevicesChanged(id));
+            if (from is not null && from.IncidentId != id) signals.Post(new DevicesChanged(from.IncidentId));
             return Results.Ok(new { deviceId, incidentId = id, crewId });
         }).RequireAuthorization(Policies.Command);
 
@@ -190,7 +207,8 @@ public static class LiveEndpoints
                 Time = clock.GetUtcNow(), IncidentId = id, CrewId = crewId, Type = "device.unassigned", Actor = actor.Name, Role = actor.Role,
                 Details = System.Text.Json.JsonSerializer.SerializeToDocument(new { deviceId }),
             });
-            await db.SaveChangesAsync(ct);
+            try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateConcurrencyException) { throw new ConflictException($"Device {deviceId} was changed by someone else at the same time; reload and try again."); }
             signals.Post(new DevicesChanged(id));
             return Results.NoContent();
         }).RequireAuthorization(Policies.Command);

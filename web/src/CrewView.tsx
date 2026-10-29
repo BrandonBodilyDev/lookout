@@ -92,7 +92,7 @@ function CrewScreen({ session, header, onLeave }: { session: CrewSession; header
       const existing = m.get(a.id);
       return existing && existing.version > a.version ? m : new Map(m).set(a.id, a);
     });
-    if (!seen.current.has(a.id) && a.requiresAck && (a.state === "sent" || a.state === "escalated")) {
+    if (!seen.current.has(a.id) && a.requiresAck && (a.state === "queued" || a.state === "sent" || a.state === "escalated")) {
       seen.current.add(a.id);
       navigator.vibrate?.([400, 150, 400, 150, 400]);
       if ("Notification" in window && Notification.permission === "granted")
@@ -120,7 +120,7 @@ function CrewScreen({ session, header, onLeave }: { session: CrewSession; header
 
   const me = frame?.crews.find((c) => c.id === crewId);
   const list = [...alerts.values()].sort((a, b) => b.raisedAt.localeCompare(a.raisedAt));
-  const pending = list.find((a) => a.requiresAck && (a.state === "sent" || a.state === "escalated"));
+  const pending = list.find((a) => a.requiresAck && (a.state === "queued" || a.state === "sent" || a.state === "escalated"));
 
   const acknowledge = async (a: LiveAlert) => {
     try {

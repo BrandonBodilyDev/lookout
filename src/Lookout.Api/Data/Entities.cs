@@ -114,6 +114,8 @@ public sealed class DeviceRecord
     public required string CrewId { get; set; }
     public DateTimeOffset AssignedAt { get; set; }
     public required string AssignedBy { get; set; }
+    /// <summary>PostgreSQL xmin: two incident commanders moving the same device at once cannot both win.</summary>
+    public uint Version { get; set; }
 }
 
 /// <summary>A crew phone's Web Push subscription, valid for one incident and one crew.</summary>

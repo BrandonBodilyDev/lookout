@@ -46,7 +46,8 @@ Log($"Incident {incidentId}: {scenario.Name}, {rate}x real time, started {starte
 
 // Each crew carries one simulated device. A real one would be a satellite messenger registered by its
 // IMEI; here the id is derived from the incident so separate runs never share a device.
-var deviceOf = scenario.Crews.ToDictionary(c => c.Id, c => $"SIM-{incidentId:N}"[..12] + $"-{c.Id}");
+// The tail of a version-7 GUID is random; its head is a timestamp shared by incidents started together.
+var deviceOf = scenario.Crews.ToDictionary(c => c.Id, c => $"SIM-{incidentId.ToString("N")[^8..]}-{c.Id}");
 var crewOf = deviceOf.ToDictionary(kv => kv.Value, kv => kv.Key);
 foreach (var (crewId, deviceId) in deviceOf)
 {

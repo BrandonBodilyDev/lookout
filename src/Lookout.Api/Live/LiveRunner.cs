@@ -50,21 +50,31 @@ public sealed class LiveRunner(
     ILogger<LiveRunner> log) : BackgroundService
 {
     private readonly Dictionary<Guid, IncidentRuntime> _incidents = new();
-    private readonly Channel<(string Topic, byte[] Payload)> _inbox = Channel.CreateUnbounded<(string, byte[])>();
+    /// <summary>MQTT messages, each with the device directory as it was when the message arrived.</summary>
+    private readonly Channel<(string Topic, byte[] Payload, IReadOnlyDictionary<string, (Guid Incident, string Crew)>? Devices)> _inbox =
+        Channel.CreateUnbounded<(string, byte[], IReadOnlyDictionary<string, (Guid Incident, string Crew)>?)>();
     private readonly Dictionary<Guid, DateTimeOffset> _nwsFetched = new();
     private DateTimeOffset _nextCot;
-    /// <summary>Device id to the incident and crew it reports for, from the devices table.</summary>
-    private Dictionary<string, (Guid Incident, string Crew)> _devices = new();
+    /// <summary>Device id to the incident and crew it reports for, from the devices table. Replaced whole, never mutated, so the MQTT thread can read it.</summary>
+    private volatile IReadOnlyDictionary<string, (Guid Incident, string Crew)> _devices = new Dictionary<string, (Guid, string)>();
+    private volatile bool _devicesLoaded;
+    private DateTimeOffset _nextDeviceReload;
+    /// <summary>A safety net: the directory also reloads on every assignment, but a missed signal must not last.</summary>
+    private static readonly TimeSpan DeviceReloadInterval = TimeSpan.FromSeconds(60);
     private readonly HashSet<string> _unknownDevicesLogged = [];
     private MqttConnection? _mqtt;
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
+        // Before subscribing, so the first uplinks are not dropped as unregistered.
+        await Guard("loading the device directory", () => ReloadDevicesAsync(ct), ct);
         if (broker.Settings is { } mqttSettings)
         {
             _mqtt = new MqttConnection(mqttSettings, "lookout-api", m => log.LogInformation("{Message}", m))
             {
-                OnMessage = (topic, payload) => { _inbox.Writer.TryWrite((topic, payload)); return Task.CompletedTask; },
+                // Resolve the device's owner as of arrival: a reassignment processed later in the same
+                // pass must not credit this message (a fix, or an ack by link sequence) to the new crew.
+                OnMessage = (topic, payload) => { _inbox.Writer.TryWrite((topic, payload, _devicesLoaded ? _devices : null)); return Task.CompletedTask; },
             };
             await _mqtt.StartAsync([Topics.AllDeviceUplinks, Topics.AllDroneFronts, Topics.AllWeather], ct);
         }
@@ -74,14 +84,14 @@ public sealed class LiveRunner(
         }
 
         await LoadRunningIncidentsAsync(ct);
-        await Guard("loading the device directory", () => ReloadDevicesAsync(ct), ct);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(options.TickSeconds));
         do
         {
             // Each unit of work is guarded on its own: one bad message or one failing incident must
             // never stop the others, because a stalled loop means no alerts for anyone.
             while (signals.Reader.TryRead(out var s)) await Guard("signal", () => HandleSignalAsync(s, ct), ct);
-            while (_inbox.Reader.TryRead(out var m)) await Guard($"message on {m.Topic}", () => HandleMessageAsync(m.Topic, m.Payload, ct), ct);
+            if (!_devicesLoaded || clock.GetUtcNow() >= _nextDeviceReload) await Guard("loading the device directory", () => ReloadDevicesAsync(ct), ct);
+            while (_inbox.Reader.TryRead(out var m)) await Guard($"message on {m.Topic}", () => HandleMessageAsync(m.Topic, m.Payload, m.Devices, ct), ct);
             foreach (var rt in _incidents.Values.ToList()) await Guard($"tick of incident {rt.Incident.Id}", () => TickAsync(rt, ct), ct);
             await Guard("CoT export", () => ExportCotAsync(ct), ct);
         }
@@ -165,6 +175,8 @@ public sealed class LiveRunner(
         var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
         _devices = (await db.Devices.AsNoTracking().ToListAsync(ct))
             .ToDictionary(d => d.DeviceId, d => (d.IncidentId, d.CrewId));
+        _devicesLoaded = true;
+        _nextDeviceReload = clock.GetUtcNow() + DeviceReloadInterval;
         _unknownDevicesLogged.Clear();
     }
 
@@ -197,6 +209,7 @@ public sealed class LiveRunner(
                 break;
             case DevicesChanged:
                 await ReloadDevicesAsync(ct);
+                await hub.Clients.Group(s.IncidentId.ToString()).SendAsync("devices", ct);
                 break;
             case UplinkReceived u when _incidents.TryGetValue(s.IncidentId, out var rt3):
                 await HandleUplinkAsync(rt3, u.CrewId, u.Payload, ct);
@@ -207,12 +220,13 @@ public sealed class LiveRunner(
         }
     }
 
-    private async Task HandleMessageAsync(string topic, byte[] payload, CancellationToken ct)
+    private async Task HandleMessageAsync(string topic, byte[] payload, IReadOnlyDictionary<string, (Guid Incident, string Crew)>? devicesAtArrival, CancellationToken ct)
     {
         // Crew devices: the registry, not the topic, says which incident and crew a device reports for.
         if (Topics.ParseDevice(topic) is { Up: true } dev)
         {
-            if (!_devices.TryGetValue(dev.DeviceId, out var owner))
+            // Unknown at arrival but assigned since: it belonged to no crew then, so the current owner is safe.
+            if (!(devicesAtArrival ?? _devices).TryGetValue(dev.DeviceId, out var owner) && !_devices.TryGetValue(dev.DeviceId, out owner))
             {
                 if (_unknownDevicesLogged.Add(dev.DeviceId))
                     log.LogWarning("Uplink from unregistered device {Device} dropped; assign it to a crew first", dev.DeviceId);

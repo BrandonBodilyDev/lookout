@@ -9,9 +9,9 @@ public sealed record LayoutChanged(Guid IncidentId) : IncidentSignal(IncidentId)
 /// <summary>A device was assigned, moved or removed; the runner reloads its device directory.</summary>
 public sealed record DevicesChanged(Guid IncidentId) : IncidentSignal(IncidentId);
 public sealed record AlertClosed(Guid IncidentId, string CrewId, Guid AlertId) : IncidentSignal(IncidentId);
-/// <summary>A crew uplink that arrived over HTTPS (a phone) instead of MQTT; same bytes, same handling.</summary>
 /// <summary>An NWS observation fetched off the loop, to apply on it.</summary>
 public sealed record NwsWindReceived(Guid IncidentId, double? WindFromDeg, double MidflameWindMs, string Label) : IncidentSignal(IncidentId);
+/// <summary>A crew uplink that arrived over HTTPS (a phone) instead of MQTT; same bytes, same handling.</summary>
 public sealed record UplinkReceived(Guid IncidentId, string CrewId, byte[] Payload) : IncidentSignal(IncidentId);
 
 /// <summary>In-process queue from request handlers to the live runner's single processing loop.</summary>

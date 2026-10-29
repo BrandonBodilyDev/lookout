@@ -33,6 +33,9 @@ public static class AlertStateMachine
         [(AlertState.Queued, AlertAction.Cancel)] = AlertState.Cancelled,
         // Never delivered (no link device, broker down): the IC must hear about it just as for an unanswered one.
         [(AlertState.Queued, AlertAction.Escalate)] = AlertState.Escalated,
+        // The link has not delivered it, but the crew may have seen it by push or in the app, or the IC
+        // reached them by radio. Refusing the ack would leave a seen warning to escalate as unseen.
+        [(AlertState.Queued, AlertAction.Acknowledge)] = AlertState.Acknowledged,
 
         [(AlertState.Sent, AlertAction.Acknowledge)] = AlertState.Acknowledged,
         [(AlertState.Sent, AlertAction.Escalate)] = AlertState.Escalated,

@@ -232,6 +232,12 @@ namespace Lookout.Api.Data.Migrations
                     b.Property<Guid>("IncidentId")
                         .HasColumnType("uuid");
 
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.HasKey("DeviceId");
 
                     b.HasIndex("IncidentId", "CrewId");
