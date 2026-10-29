@@ -41,6 +41,7 @@ public sealed class LiveRunner(
     LiveSnapshots snapshots,
     NwsClient nws,
     CotSender cot,
+    Push.PushNotifier push,
     CotSettings cotSettings,
     LiveOptions options,
     BrokerConfig broker,
@@ -336,6 +337,16 @@ public sealed class LiveRunner(
                 await alerts.MarkSentAsync(tx.AlertId, ct);
                 var sent = await scope.ServiceProvider.GetRequiredService<LookoutDb>().Alerts.AsNoTracking().SingleAsync(x => x.Id == tx.AlertId, ct);
                 await group.SendAsync("alert", AlertDto.From(sent), ct);
+                // Wake the crew's phones too, once per warning (repeats go over the link only), off the loop.
+                if (push.Enabled && sent.RequiresAck && !tx.IsRepeat)
+                {
+                    var (incidentId, crewId, level, text) = (sent.IncidentId, sent.CrewId, sent.Level, sent.Text);
+                    _ = Task.Run(async () =>
+                    {
+                        try { await push.NotifyAsync(incidentId, crewId, level, text, ct); }
+                        catch (Exception e) when (!ct.IsCancellationRequested) { log.LogWarning(e, "Web Push for crew {Crew} failed", crewId); }
+                    }, ct);
+                }
             }
             catch (Exception e) when (!ct.IsCancellationRequested)
             {

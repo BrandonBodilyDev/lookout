@@ -27,6 +27,7 @@ public sealed class LookoutAppFixture : IAsyncLifetime
     public string ConnectionString => _db.GetConnectionString();
     /// <summary>The restricted runtime login the API itself uses, exactly as in docker compose.</summary>
     public string RuntimeConnectionString { get; private set; } = "";
+    public string VapidPublicKey { get; private set; } = "";
 
     public async ValueTask InitializeAsync()
     {
@@ -42,9 +43,12 @@ public sealed class LookoutAppFixture : IAsyncLifetime
         RuntimeConnectionString = new Npgsql.NpgsqlConnectionStringBuilder(_db.GetConnectionString())
             { Username = "lookout_runtime", Password = "lookout-runtime-dev" }.ConnectionString;
 
+        (VapidPublicKey, var vapidPrivate) = Push.WebPushSettings.Generate();
         App = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
         {
             b.UseEnvironment("Testing");
+            b.UseSetting("Lookout:WebPush:PublicKey", VapidPublicKey);
+            b.UseSetting("Lookout:WebPush:PrivateKey", vapidPrivate);
             b.UseSetting("ConnectionStrings:Lookout", RuntimeConnectionString);
             b.UseSetting("ConnectionStrings:LookoutMigrations", _db.GetConnectionString());
             b.UseSetting("Lookout:DevAuth", "true");

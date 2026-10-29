@@ -79,6 +79,7 @@ function CrewScreen({ session, header, onLeave }: { session: CrewSession; header
   const [conn, setConn] = useState(HubConnectionState.Disconnected);
   const [message, setMessage] = useState<string | null>(null);
   const [gps, setGps] = useState<{ on: boolean; last?: string; accuracy?: number; error?: string }>({ on: false });
+  const [push, setPush] = useState<"off" | "on" | "unavailable">("off");
   const seen = useRef(new Set<string>());
   const watchId = useRef<number | null>(null);
   const lastSent = useRef(0);
@@ -128,6 +129,31 @@ function CrewScreen({ session, header, onLeave }: { session: CrewSession; header
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && e.current) { upsert(e.current as LiveAlert); setMessage("That alert changed; showing the latest."); }
       else setMessage((e as Error).message);
+    }
+  };
+
+  /** Web Push: lets a warning wake the phone with this page closed. */
+  const enablePush = async () => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      setPush("unavailable");
+      setMessage("This browser cannot receive push alerts. On iPhone, add Lookout to the home screen and open it from there.");
+      return;
+    }
+    try {
+      const { publicKey } = await api<{ publicKey: string }>("/api/push/public-key", null);
+      const registration = await navigator.serviceWorker.register("/sw.js");
+      if ((await Notification.requestPermission()) !== "granted") {
+        setMessage("Notifications are blocked for this site; allow them in the browser settings.");
+        return;
+      }
+      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToBytes(publicKey) });
+      const json = subscription.toJSON();
+      await post(`/api/incidents/${incidentId}/crews/${crewId}/push`, token, { endpoint: json.endpoint, keys: json.keys });
+      setPush("on");
+      setMessage("Push alerts on: warnings will reach this phone even with the page closed.");
+    } catch (e) {
+      setPush("unavailable");
+      setMessage(e instanceof ApiError && e.status === 404 ? "Push alerts are not configured on this server." : `Could not turn on push alerts: ${(e as Error).message}`);
     }
   };
 
@@ -195,13 +221,13 @@ function CrewScreen({ session, header, onLeave }: { session: CrewSession; header
       <section className="card">
         <div className="button-row">
           <button className="btn" onClick={toggleGps}>{gps.on ? "Stop sending my GPS" : "Send my phone's GPS"}</button>
-          {"Notification" in window && Notification.permission === "default" && (
-            <button className="btn" onClick={() => Notification.requestPermission().then(() => setMessage(null))}>Allow alert notifications</button>
-          )}
+          {push !== "on" && <button className="btn" onClick={enablePush}>Enable push alerts</button>}
         </div>
         <p className="muted">
           {gps.on ? `GPS on${gps.last ? `: last sent ${gps.last}, ±${gps.accuracy} m` : ", waiting for a fix"}.` : "GPS off: the engine uses this crew's tracker."}
-          {gps.error && ` ${gps.error}`} Alerts vibrate and notify while this page is open; a closed page needs Web Push, which this demo does not set up.
+          {gps.error && ` ${gps.error}`} {push === "on"
+            ? "Push alerts are on for this phone."
+            : "With the page open, alerts vibrate here. Enable push alerts to be woken with it closed (on iPhone, from the home-screen app)."}
         </p>
       </section>
 
@@ -220,4 +246,13 @@ function CrewScreen({ session, header, onLeave }: { session: CrewSession; header
       <button className="btn small" onClick={onLeave}>Sign out</button>
     </div>
   );
+}
+
+/** VAPID public keys travel as base64url; PushManager wants raw bytes. */
+function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
+  const padded = (value + "=".repeat((4 - (value.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(padded);
+  const bytes = new Uint8Array(new ArrayBuffer(raw.length));
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
 }

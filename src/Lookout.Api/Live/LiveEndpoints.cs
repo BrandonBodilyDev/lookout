@@ -15,6 +15,8 @@ public static class LiveEndpoints
     public sealed record PutRoute(string Name, string SafetyZone, double[][] Path, uint? Version);
     public sealed record PutZone(string Name, double[][] Ring, uint? Version);
     public sealed record PhonePosition(double Lat, double Lon, int? Battery, ushort? Sequence);
+    public sealed record PushKeys(string P256dh, string Auth);
+    public sealed record PushSubscribe(string Endpoint, PushKeys Keys);
 
     public static void MapLive(this WebApplication app, bool devAuth)
     {
@@ -107,6 +109,32 @@ public static class LiveEndpoints
             var payload = Link.WireFormat.EncodePosition(new Link.PositionReport(p.Sequence ?? 0, clock.GetUtcNow(), p.Lat, p.Lon, p.Battery ?? 100));
             signals.Post(new UplinkReceived(id, crewId.ToUpperInvariant(), payload));
             return Results.Accepted(value: new { bytes = payload.Length });
+        }).RequireAuthorization(Policies.Field);
+
+        // Web Push: a crew phone registers so warnings can wake it with the page closed.
+        app.MapGet("/api/push/public-key", (Push.WebPushSettings push) =>
+            push.Enabled ? Results.Ok(new { publicKey = push.PublicKey }) : Results.NotFound());
+
+        api.MapPost("/{id:guid}/crews/{crewId}/push", async (Guid id, string crewId, PushSubscribe s, LookoutDb db, TimeProvider clock, HttpContext http, CancellationToken ct) =>
+        {
+            var actor = Actor.From(http.User);
+            crewId = crewId.ToUpperInvariant();
+            if (actor.Role == Roles.Crew && actor.CrewId != crewId)
+                return Results.Problem($"Crew {actor.CrewId} cannot subscribe for crew {crewId}.", statusCode: StatusCodes.Status403Forbidden);
+            // Push services are https; anything else (or junk) is refused rather than called later.
+            if (!Uri.TryCreate(s.Endpoint, UriKind.Absolute, out var endpoint) || endpoint.Scheme != Uri.UriSchemeHttps
+                || s.Endpoint.Length > 1024 || s.Keys.P256dh.Length > 128 || s.Keys.Auth.Length > 64)
+                return Results.Problem("Not a valid push subscription.", statusCode: StatusCodes.Status400BadRequest);
+            if (!await db.Crews.AnyAsync(c => c.IncidentId == id && c.CrewId == crewId, ct)) throw new NotFoundException($"Crew {crewId}");
+            if (!await db.PushSubscriptions.AnyAsync(p => p.IncidentId == id && p.CrewId == crewId && p.Endpoint == s.Endpoint, ct))
+            {
+                db.PushSubscriptions.Add(new PushSubscriptionRecord
+                {
+                    IncidentId = id, CrewId = crewId, Endpoint = s.Endpoint, P256dh = s.Keys.P256dh, Auth = s.Keys.Auth, CreatedAt = clock.GetUtcNow(),
+                });
+                await db.SaveChangesAsync(ct);
+            }
+            return Results.NoContent();
         }).RequireAuthorization(Policies.Field);
 
         api.MapGet("/{id:guid}/fixes", async (Guid id, string crewId, int? limit, LookoutDb db, CancellationToken ct) =>

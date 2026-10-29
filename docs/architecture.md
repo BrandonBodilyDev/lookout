@@ -120,3 +120,11 @@ Short records of the choices that shape Lookout, why they were made, and what th
 
 **Cost.** One DNS lookup every 10 seconds. A WebSocket that is already open stays on the old connection until it reconnects, which SignalR does on its own.
 
+## 15. Web Push beside the link, not instead of it
+
+**Decision.** A new WARNING or CRITICAL goes out on the crew link and, once, by Web Push to the crew's subscribed phones. Repeats go over the link only. Push runs off the live loop, and subscriptions the push service reports gone are deleted.
+
+**Why.** A crew phone on cellular or Starlink may be the fastest path when it has signal, and a page that is not open cannot receive SignalR. The satellite link stays the path of record, because a phone in a canyon has no signal.
+
+**Cost.** Push depends on the browser vendor's push service and, on iPhone, on the web app being added to the home screen. Delivery is not confirmed by the push protocol; the acknowledgement workflow is what confirms the crew saw the warning.
+

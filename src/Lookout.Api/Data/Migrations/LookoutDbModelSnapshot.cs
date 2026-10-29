@@ -286,6 +286,47 @@ namespace Lookout.Api.Data.Migrations
                     b.ToTable("incidents", (string)null);
                 });
 
+            modelBuilder.Entity("Lookout.Api.Data.PushSubscriptionRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Auth")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CrewId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Endpoint")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<Guid>("IncidentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("P256dh")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IncidentId", "CrewId", "Endpoint")
+                        .IsUnique();
+
+                    b.ToTable("push_subscriptions", (string)null);
+                });
+
             modelBuilder.Entity("Lookout.Api.Data.SafetyZoneRecord", b =>
                 {
                     b.Property<Guid>("IncidentId")
@@ -332,6 +373,15 @@ namespace Lookout.Api.Data.Migrations
                 });
 
             modelBuilder.Entity("Lookout.Api.Data.EscapeRouteRecord", b =>
+                {
+                    b.HasOne("Lookout.Api.Data.Incident", null)
+                        .WithMany()
+                        .HasForeignKey("IncidentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Lookout.Api.Data.PushSubscriptionRecord", b =>
                 {
                     b.HasOne("Lookout.Api.Data.Incident", null)
                         .WithMany()

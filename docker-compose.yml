@@ -49,6 +49,9 @@ services:
       Lookout__Mqtt__Host: mqtt
       Lookout__Mqtt__Username: lookout
       Lookout__Mqtt__Password: lookout-dev-mqtt
+      # Web Push (VAPID) keys: development only. Make your own with: dotnet run --project src/Lookout.Sim -- vapid
+      Lookout__WebPush__PublicKey: BLZMWH1OJnOjGu_xl4Z1WPxM7JnsxgA-TS8JVsjZb2piI1X64ATC6Of-vDYhltbePSZHuXBUdjsNrU1JMhKFAR8
+      Lookout__WebPush__PrivateKey: nQj9ItZyAZ_XzMr4KTEc42ZQj9B_6Hnh9xh14YTllww
       # Optional TAK export: point at a TAK server's plain CoT input.
       # Lookout__Cot__Host: freetakserver
       # Lookout__Cot__Port: "8087"

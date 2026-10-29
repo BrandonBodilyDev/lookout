@@ -103,6 +103,18 @@ public sealed class AuditEvent
     public JsonDocument? Details { get; set; }
 }
 
+/// <summary>A crew phone's Web Push subscription, valid for one incident and one crew.</summary>
+public sealed class PushSubscriptionRecord
+{
+    public long Id { get; set; }
+    public Guid IncidentId { get; set; }
+    public required string CrewId { get; set; }
+    public required string Endpoint { get; set; }
+    public required string P256dh { get; set; }
+    public required string Auth { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
 /// <summary>Crew GPS fixes as received over the uplink (TimescaleDB hypertable).</summary>
 public sealed class CrewFix
 {

@@ -91,6 +91,9 @@ if (live)
     builder.Services.AddSignalR();
     builder.Services.AddSingleton(config.GetSection("Lookout:Cot").Get<CotSettings>() ?? new CotSettings());
     builder.Services.AddSingleton<CotSender>();
+    builder.Services.AddSingleton(config.GetSection("Lookout:WebPush").Get<Lookout.Api.Push.WebPushSettings>() ?? new Lookout.Api.Push.WebPushSettings());
+    builder.Services.AddHttpClient(nameof(Lookout.Api.Push.PushNotifier), c => c.Timeout = TimeSpan.FromSeconds(10));
+    builder.Services.AddSingleton<Lookout.Api.Push.PushNotifier>();
     if (config.GetValue("Lookout:Live:Enabled", true)) builder.Services.AddHostedService<LiveRunner>();
 }
 

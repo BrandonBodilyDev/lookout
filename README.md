@@ -72,7 +72,7 @@ The Crew tab is what a crew member sees. It shows one status card colored by ale
 
 - **Acknowledgements** use the same workflow, roles and version checks as the dashboard. A crew can acknowledge only its own alerts.
 - **Phone GPS is optional.** A phone without a satellite modem posts its position over HTTPS. The API packs it into the same 16-byte position report a tracker sends over the link and feeds it through the same code path.
-- **Alerts vibrate and raise a notification while the page is open.** Waking a closed phone needs Web Push, which on iPhone works only for web apps added to the home screen. This demo does not set up push, and says so on the screen.
+- **Push alerts wake a closed phone.** With "Enable push alerts", each new WARNING or CRITICAL is also sent by Web Push (VAPID-signed, encrypted, high urgency for CRITICAL, 15-minute time-to-live), so it arrives with the page closed. On iPhone this works only for the web app added to the home screen. A test runs the server side against a fake push service on localhost; delivery to a real phone has not been tried yet.
 
 ## Drone input
 
@@ -301,7 +301,7 @@ The dev API listens on port 5080 and the dashboard on http://localhost:5173. Add
 
 1. **Phase 1, done.** Terrain-aware engine, live incidents over MQTT, the link governor, the acknowledgement workflow, the audit trail, TAK export, and NWS weather.
 2. **Phase 2, built.** The drone pipeline described above: subtitle tracks, ground projection over terrain, color and ONNX detectors, burned-area mapping, and publishing into live incidents. Still to do: run it on real footage, either FLAME 2 prescribed-burn video or a legal fire-pit flight, and calibrate the Mavic Mini's field of view against a ground target.
-3. **Phase 3, started.** Done: the crew phone view with acknowledgements and optional phone GPS. Still to do: Web Push so alerts wake a closed phone, a live drone video feed through DJI Mobile SDK 4 on Android, and on-device inference.
+3. **Phase 3, started.** Done: the crew phone view with acknowledgements, optional phone GPS, and Web Push. Still to do: try push on real Android and iPhone devices, a live drone video feed through DJI Mobile SDK 4 on Android, and on-device inference.
 
 ## Drone safety
 

@@ -9,6 +9,17 @@ using Lookout.Sim;
 //   Build terrain:    dotnet run --project src/Lookout.Sim -- dem <scenario.yaml> <out.asc> <west> <east> <south> <north> [cell]
 //                     (extent in metres in the scenario's local frame, east and north of its origin)
 //   Drone survey:     dotnet run --project src/Lookout.Sim -- drone (track | survey | flight) ...
+if (args.Length > 0 && args[0] == "vapid")
+{
+    // Web Push identity for the API: Lookout__WebPush__PublicKey / Lookout__WebPush__PrivateKey.
+    using var ec = System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
+    var p = ec.ExportParameters(true);
+    string B64(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    Console.WriteLine($"Lookout__WebPush__PublicKey={B64([0x04, .. p.Q.X!, .. p.Q.Y!])}");
+    Console.WriteLine($"Lookout__WebPush__PrivateKey={B64(p.D!)}");
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "drone")
     return await DroneCommands.RunAsync(args);
 
