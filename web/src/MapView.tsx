@@ -339,5 +339,35 @@ export function MapView({ layout, state, draw = null }: { layout: MapLayout; sta
     map.getCanvas().style.cursor = draw ? "crosshair" : "";
   }, [draw]);
 
-  return <div ref={container} className="map" role="region" aria-label="Incident map" />;
+  return (
+    <div className="map-wrap">
+      <div ref={container} className="map" role="region" aria-label="Incident map" />
+      <Legend />
+    </div>
+  );
+}
+
+function Legend() {
+  return (
+    // Open on wide screens, collapsed on phones; after that the user's toggle wins.
+    <details
+      className="legend"
+      ref={(el) => {
+        if (el && !el.dataset.init) {
+          el.open = window.innerWidth > 860;
+          el.dataset.init = "1";
+        }
+      }}
+    >
+      <summary>Map key</summary>
+      <ul>
+        <li><span className="key key-fire" />Burned area (latest survey)</li>
+        <li><span className="key key-leave" />Leave-now zone: fire inside means go</li>
+        <li><span className="key key-route" />Escape route, coloured by crew level</li>
+        <li><span className="key key-zone" />Safety zone</li>
+        <li><span className="key key-cut" />Where the fire would cut the route</li>
+        <li><span className="key key-crew" />Crew at last fix (faded when stale)</li>
+      </ul>
+    </details>
+  );
 }

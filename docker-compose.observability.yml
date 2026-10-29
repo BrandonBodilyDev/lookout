@@ -1,0 +1,17 @@
+# Adds traces and metrics:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
+# Aspire dashboard at http://localhost:18888 (anonymous access: development only).
+services:
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:13.6.2
+    environment:
+      ASPIRE_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"
+    ports:
+      - "18888:18888"
+
+  api:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
+      OTEL_SERVICE_NAME: lookout-api
+    depends_on:
+      aspire-dashboard: { condition: service_started }

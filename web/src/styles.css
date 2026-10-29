@@ -36,7 +36,7 @@ body { background: var(--bg); color: var(--text); }
   height: 100%;
 }
 
-.map { width: 100%; height: 100%; min-height: 320px; }
+.map { width: 100%; height: 100%; min-height: 320px; position: absolute; inset: 0; }
 
 .panel {
   background: var(--panel);
@@ -241,3 +241,22 @@ details.card[open] summary { margin-bottom: 8px; }
 .ack-card { border-color: var(--critical); }
 .ack-text { font-size: 16px; font-weight: 600; }
 .ack-button { width: 100%; font-size: 20px; padding: 16px; }
+
+/* ---- Map key ---- */
+.map-wrap { position: relative; width: 100%; height: 100%; min-height: 320px; }
+.legend {
+  position: absolute; left: 10px; bottom: 36px; z-index: 2; max-width: 250px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 12px;
+}
+.legend summary { cursor: pointer; font-weight: 700; }
+.legend ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.legend li { display: flex; align-items: center; gap: 8px; }
+.key { width: 18px; height: 12px; flex: none; border-radius: 2px; }
+.key-fire { background: rgba(232, 84, 47, 0.55); border: 2px solid #b42318; }
+.key-leave { border: 2px dashed var(--critical); background: color-mix(in srgb, var(--critical) 10%, transparent); }
+.key-route { height: 4px; background: repeating-linear-gradient(90deg, var(--warning) 0 6px, transparent 6px 9px); }
+.key-zone { background: rgba(47, 158, 91, 0.3); border: 2px solid #1f7a43; }
+.key-cut { width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--critical); }
+.key-crew { width: 12px; height: 12px; border-radius: 50%; background: var(--critical); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--border); }
+@media (max-width: 860px) { .legend { bottom: 30px; max-width: 200px; } .legend:not([open]) { padding: 4px 8px; } }
