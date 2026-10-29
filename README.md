@@ -66,6 +66,8 @@ During the live run of the demo:
 - Alpha's CRITICAL goes out on the update after the wind shift and is acknowledged by the crew's device seconds later.
 - If a crew never acknowledges a WARNING or CRITICAL, the alert escalates to the incident commander after 3 scenario minutes, and the IC can acknowledge on the crew's behalf.
 
+The field simulator assigns one simulated link device to each crew when it starts the incident. The incident commander can assign or remove devices from the dashboard; a crew with no device shows that its link alerts are waiting. Web Push to the crew's phones still goes out.
+
 ### The crew's phone
 
 The Crew tab is what a crew member sees. It shows one status card colored by alert level, one large Acknowledge button for the current warning, and the last few messages.
@@ -185,6 +187,8 @@ Sizes follow Iridium Short Burst Data: 340 bytes from the crew, 270 bytes to the
 
 The [`LinkGovernor`](src/Lookout.Link/LinkGovernor.cs) keeps one outbound slot per crew, so a newer alert replaces an older unacknowledged one. It spaces transmissions to one device 40 seconds apart, sends the most severe crew first, and repeats warnings every 60 seconds until acknowledged. It runs on scenario time, so an accelerated demo keeps realistic link behaviour.
 
+Each device has its own uplink and downlink topic, named by its device id the way an Iridium modem is known by its IMEI. The incident commander assigns devices to crews, and every assignment is audited. An alert for a crew goes to all of its devices.
+
 Drone surveys and weather travel as JSON on a separate broadband link, as they would over a Starlink or LTE backhaul. TAK export is built on the server only, because a minimal Cursor on Target position is about 400 bytes of XML.
 
 ### Alert workflow
@@ -196,6 +200,7 @@ stateDiagram-v2
     Queued --> Superseded: newer alert for crew
     Sent --> Acknowledged: crew device or IC
     Sent --> Escalated: no ack in 3 min
+    Queued --> Escalated: not delivered in 3 min
     Escalated --> Acknowledged: crew device or IC
     Sent --> Superseded
     Escalated --> Superseded
@@ -209,10 +214,11 @@ stateDiagram-v2
 
 - **Every transition is listed in one place,** [`AlertStateMachine.cs`](src/Lookout.Engine/Workflow/AlertStateMachine.cs). Anything not listed is refused with HTTP 409.
 - **Optimistic concurrency.** Alerts, routes and safety zones carry PostgreSQL's `xmin` as a row version. A client must send the version it saw. A stale version gets a 409 with the current state, and two simultaneous acknowledgements resolve to exactly one success.
+- **Undelivered is escalated too.** A WARNING or CRITICAL the link cannot deliver, because the crew has no device or the broker is down, escalates to the incident commander after the same 3 minutes. The governor keeps trying, and a late first delivery is recorded in the audit trail.
 - **Roles.** The incident commander can start incidents, acknowledge for any crew, cancel with a reason, and redraw routes and safety zones. A crew device can acknowledge only its own alerts. An observer can only watch.
 - **Audit.** Each alert change and its audit event are saved in one transaction. The audit table is a TimescaleDB hypertable, and a database trigger rejects UPDATE, DELETE and TRUNCATE. The API also connects as a restricted role that may only insert into and read the audit table; migrations run as the owner.
 
-Sign-in uses development tokens issued by the API; a real deployment would use the organisation's identity provider. Crew tokens are valid for one incident only. On the broker, the server and the field simulator have separate accounts, and access rules let a crew device use only its own crew's topics; those rules are per crew, not yet per incident.
+Sign-in uses development tokens issued by the API; a real deployment would use the organisation's identity provider. Crew tokens are valid for one incident only. On the broker, the server and the field simulator have separate accounts, and a device login can use only its own two topics. The incident commander assigns each device to a crew, and the server ignores reports from devices that are not assigned, so a device counts for one incident and crew at a time.
 
 ### Data model
 

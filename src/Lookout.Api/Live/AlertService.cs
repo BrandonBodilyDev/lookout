@@ -90,6 +90,12 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
             alert.SentAt = now;
             Transition(alert, AlertAction.Send, Actor.Link, now, new { sendCount = alert.SendCount });
         }
+        else if (alert.SentAt is null)
+        {
+            // Escalated before the link could deliver it; it has now gone out for the first time.
+            alert.SentAt = now;
+            Audit(alert, "alert.sent", Actor.Link, now, new { sendCount = alert.SendCount, afterEscalation = true });
+        }
         else
         {
             Audit(alert, "alert.resent", Actor.Link, now, new { sendCount = alert.SendCount });
@@ -117,13 +123,14 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
     /// A crew device acknowledged by link sequence number. Devices do not know row versions, so the
     /// current version is used; a duplicate or late ack (alert already closed) is recorded and ignored.
     /// </summary>
-    public async Task<AlertRecord?> AcknowledgeFromDeviceAsync(Guid incidentId, string crewId, int linkSeq, CancellationToken ct = default)
+    /// <param name="deviceId">The registered link device that sent the ack; recorded as the actor.</param>
+    public async Task<AlertRecord?> AcknowledgeFromDeviceAsync(Guid incidentId, string crewId, int linkSeq, CancellationToken ct = default, string? deviceId = null)
     {
         var alert = await db.Alerts
             .Where(a => a.IncidentId == incidentId && a.CrewId == crewId && a.LinkSeq % 65536 == linkSeq % 65536)
             .OrderByDescending(a => a.LinkSeq)
             .FirstOrDefaultAsync(ct);
-        var device = new Actor($"device-{crewId.ToLowerInvariant()}", Roles.Crew, crewId);
+        var device = new Actor($"device-{(deviceId ?? crewId).ToLowerInvariant()}", Roles.Crew, crewId);
         var now = clock.GetUtcNow();
         if (alert is null) return null;
         if (!AlertStateMachine.TryApply(alert.State, AlertAction.Acknowledge, out _))
@@ -152,17 +159,22 @@ public sealed class AlertService(LookoutDb db, TimeProvider clock)
         return alert;
     }
 
-    /// <summary>Escalate sent alerts that needed an acknowledgement and did not get one in time.</summary>
+    /// <summary>
+    /// Escalate alerts that needed an acknowledgement and did not get one in time: sent ones the crew
+    /// has not answered, and queued ones the link never delivered (no device, broker down).
+    /// </summary>
     public async Task<IReadOnlyList<AlertRecord>> EscalateOverdueAsync(Guid incidentId, TimeSpan timeout, CancellationToken ct = default)
     {
         var now = clock.GetUtcNow();
         var cutoff = now - timeout;
         var overdue = await db.Alerts
-            .Where(a => a.IncidentId == incidentId && a.State == AlertState.Sent && a.RequiresAck && a.SentAt < cutoff)
+            .Where(a => a.IncidentId == incidentId && a.RequiresAck
+                && ((a.State == AlertState.Sent && a.SentAt < cutoff) || (a.State == AlertState.Queued && a.RaisedAt < cutoff)))
             .ToListAsync(ct);
         foreach (var a in overdue)
         {
-            Transition(a, AlertAction.Escalate, Actor.Engine, now, new { waitedSeconds = (now - a.SentAt!.Value).TotalSeconds });
+            var delivered = a.State == AlertState.Sent;
+            Transition(a, AlertAction.Escalate, Actor.Engine, now, new { waitedSeconds = (now - (a.SentAt ?? a.RaisedAt)).TotalSeconds, delivered });
             a.EscalatedAt = now;
         }
         if (overdue.Count > 0) await db.SaveChangesAsync(ct);

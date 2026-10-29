@@ -310,6 +310,7 @@ function Incident(props: { id: string; token: string; role: Role; header: React.
         </section>
 
         {role === "ic" && <DrawTools detail={detail} draw={draw} setDraw={setDraw} onSave={saveDrawing} />}
+        {role === "ic" && <DeviceTools detail={detail} token={token} onChanged={(msg) => { setNotice(msg); void loadDetail(); }} />}
 
         <Weather origin={layout.origin} token={token} />
         <AfterActionPanel id={id} token={token} refreshKey={ordered.length + ordered.filter((a) => a.state === "acknowledged").length} />
@@ -408,6 +409,53 @@ function DrawTools(props: {
         {target === "zone:new" && <label>Zone id<input value={newZone} onChange={(e) => setNewZone(e.target.value)} /></label>}
       </div>
       <button className="btn small" onClick={start}>Start drawing</button>
+    </section>
+  );
+}
+
+/** Assign link devices (modem IMEI or simulator id) to crews. The server ignores reports from unassigned devices. */
+function DeviceTools({ detail, token, onChanged }: { detail: IncidentDetail; token: string; onChanged: (notice: string) => void }) {
+  const [crew, setCrew] = useState(detail.crews[0]?.id ?? "");
+  const [device, setDevice] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const valid = /^[A-Za-z0-9-]{3,32}$/.test(device.trim());
+  const call = async (method: "PUT" | "DELETE", crewId: string, deviceId: string, done: string) => {
+    try {
+      await api(`/api/incidents/${detail.id}/crews/${crewId}/devices/${encodeURIComponent(deviceId)}`, token, { method });
+      setError(null);
+      setDevice("");
+      onChanged(done);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  const assigned = detail.crews.flatMap((c) => c.devices.map((d) => ({ crew: c.id, device: d })));
+  return (
+    <section className="card">
+      <h3 className="section-title">Link devices</h3>
+      {assigned.length > 0 ? (
+        <ul className="device-list">
+          {assigned.map((a) => (
+            <li key={a.device}>
+              <span><b>{a.crew}</b> {a.device}</span>
+              <button className="btn small" onClick={() => call("DELETE", a.crew, a.device, `Device ${a.device} removed from ${a.crew}.`)}>Remove</button>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="muted">No devices assigned. Reports from unassigned devices are ignored.</p>}
+      <div className="form-grid">
+        <label>Crew
+          <select value={crew} onChange={(e) => setCrew(e.target.value)}>
+            {detail.crews.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+        <label>Device id
+          <input value={device} placeholder="IMEI or device id" onChange={(e) => setDevice(e.target.value)} />
+        </label>
+      </div>
+      {error && <p className="notice" role="alert">{error}</p>}
+      <button className="btn small" disabled={!valid || !crew}
+        onClick={() => call("PUT", crew, device.trim(), `Device ${device.trim()} now reports for ${crew}.`)}>Assign</button>
     </section>
   );
 }

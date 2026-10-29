@@ -267,3 +267,7 @@ details.card[open] summary { margin-bottom: 8px; }
 .route-margins .cut { background: var(--critical); color: #fff; }
 .route-margins .unsafe { background: var(--warning); color: #fff; }
 .key-route-alt { height: 4px; background: repeating-linear-gradient(90deg, #8a8580 0 6px, transparent 6px 9px); }
+
+.devices { margin: 4px 0 0; font-size: 12px; }
+.device-list { list-style: none; margin: 0 0 8px; padding: 0; }
+.device-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }

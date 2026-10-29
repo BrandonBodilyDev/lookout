@@ -31,6 +31,22 @@ How to run Lookout as a service: configuration, releases, backups, monitoring, a
 
 New tables need grants for `lookout_app` in the same migration. The API tests catch a missing grant, because they run as that role.
 
+## Assigning crew devices
+
+A crew's link device reports only after the incident commander assigns it. The device id is the modem IMEI or another stable id of 3 to 32 letters, digits or dashes. The device logs in to the broker with that id as its username.
+
+With development sign-in on, an incident commander token comes from the API:
+
+```bash
+IC_TOKEN=$(curl -s -X POST -H 'Content-Type: application/json' -d '{"role":"ic","name":"ops"}' http://localhost:8080/api/dev/token | jq -r .token)
+```
+
+```bash
+curl -X PUT -d "" -H "Authorization: Bearer $IC_TOKEN" http://localhost:8080/api/incidents/$INCIDENT/crews/ALPHA/devices/300434060012345
+```
+
+Assigning a device that already belongs to another crew or incident moves it. `DELETE` on the same path unassigns it. Both are recorded in the audit trail. Reports from an unassigned device are dropped and logged once per device. The field simulator assigns one device per crew, named `SIM-{incident}-{crew}`.
+
 ## Backup and restore
 
 TimescaleDB needs its pre- and post-restore steps around `pg_restore`, and the roles must exist before the restore so grants come back.

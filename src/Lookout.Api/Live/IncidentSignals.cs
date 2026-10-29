@@ -6,6 +6,8 @@ namespace Lookout.Api.Live;
 public abstract record IncidentSignal(Guid IncidentId);
 public sealed record IncidentCreated(Guid IncidentId) : IncidentSignal(IncidentId);
 public sealed record LayoutChanged(Guid IncidentId) : IncidentSignal(IncidentId);
+/// <summary>A device was assigned, moved or removed; the runner reloads its device directory.</summary>
+public sealed record DevicesChanged(Guid IncidentId) : IncidentSignal(IncidentId);
 public sealed record AlertClosed(Guid IncidentId, string CrewId, Guid AlertId) : IncidentSignal(IncidentId);
 /// <summary>A crew uplink that arrived over HTTPS (a phone) instead of MQTT; same bytes, same handling.</summary>
 /// <summary>An NWS observation fetched off the loop, to apply on it.</summary>

@@ -116,19 +116,37 @@ public sealed record AckReport(ushort AlertSequence, DateTimeOffset Time) : IUpl
 /// <param name="Level">0 none, 1 watch, 2 warning, 3 critical (same order as the engine's AlertLevel).</param>
 public sealed record AlertMessage(ushort Sequence, byte Level, ushort? LeaveByMinuteOfDay, string Text);
 
-/// <summary>MQTT topic layout, after OwnTracks: one tree per incident, one branch per crew.</summary>
+/// <summary>
+/// MQTT topic layout. Crew devices are addressed by their own device id (in Iridium SBD, the modem's
+/// IMEI, which the gateway attaches to every message), not by crew or incident: the server maps a
+/// device to its incident and crew from its registry. That lets the broker's ACL restrict a device
+/// login to its own two topics, and the registry restricts it to one incident and crew.
+/// Drone surveys and weather come from station accounts and are addressed per incident.
+/// </summary>
 public static class Topics
 {
-    public static string Uplink(Guid incident, string crewId) => $"lookout/{incident}/crew/{crewId}/up";
-    public static string Downlink(Guid incident, string crewId) => $"lookout/{incident}/crew/{crewId}/down";
+    public static string DeviceUplink(string deviceId) => $"lookout/dev/{deviceId}/up";
+    public static string DeviceDownlink(string deviceId) => $"lookout/dev/{deviceId}/down";
     public static string DroneFront(Guid incident) => $"lookout/{incident}/drone/front";
     public static string Weather(Guid incident) => $"lookout/{incident}/wx";
 
-    public const string AllUplinks = "lookout/+/crew/+/up";
+    public const string AllDeviceUplinks = "lookout/dev/+/up";
     public const string AllDroneFronts = "lookout/+/drone/front";
     public const string AllWeather = "lookout/+/wx";
 
-    /// <summary>Parses lookout/{incident}/{kind}/... into its parts.</summary>
+    /// <summary>3 to 32 letters, digits or dashes: no MQTT separators or wildcards.</summary>
+    public static bool IsValidDeviceId(string? id) =>
+        id is { Length: >= 3 and <= 32 } && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+
+    /// <summary>The device id of a lookout/dev/{id}/up or /down topic, or null.</summary>
+    public static (string DeviceId, bool Up)? ParseDevice(string topic)
+    {
+        var parts = topic.Split('/');
+        if (parts is not ["lookout", "dev", var id, var dir] || !IsValidDeviceId(id) || dir is not ("up" or "down")) return null;
+        return (id, dir == "up");
+    }
+
+    /// <summary>Parses lookout/{incident}/{kind}/... (station topics) into its parts.</summary>
     public static (Guid Incident, string[] Path)? Parse(string topic)
     {
         var parts = topic.Split('/');

@@ -155,7 +155,7 @@ export interface IncidentSummary {
 }
 
 export interface IncidentDetail extends IncidentSummary {
-  crews: { id: string; name: string; route: string; routes: string[]; size: number; pace: string }[];
+  crews: { id: string; name: string; route: string; routes: string[]; size: number; pace: string; devices: string[] }[];
   routes: { id: string; name: string; safetyZone: string; path: [number, number, number][]; version: number }[];
   safetyZones: { id: string; name: string; ring: LonLat[]; version: number }[];
 }

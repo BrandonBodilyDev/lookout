@@ -8,6 +8,7 @@ public class AlertStateMachineTests
     [InlineData(AlertState.Queued, AlertAction.Send, AlertState.Sent)]
     [InlineData(AlertState.Sent, AlertAction.Acknowledge, AlertState.Acknowledged)]
     [InlineData(AlertState.Sent, AlertAction.Escalate, AlertState.Escalated)]
+    [InlineData(AlertState.Queued, AlertAction.Escalate, AlertState.Escalated)] // never delivered
     [InlineData(AlertState.Escalated, AlertAction.Acknowledge, AlertState.Acknowledged)]
     [InlineData(AlertState.Queued, AlertAction.Supersede, AlertState.Superseded)]
     [InlineData(AlertState.Escalated, AlertAction.Cancel, AlertState.Cancelled)]
@@ -16,7 +17,6 @@ public class AlertStateMachineTests
 
     [Theory]
     [InlineData(AlertState.Queued, AlertAction.Acknowledge)]   // cannot ack what was never sent
-    [InlineData(AlertState.Queued, AlertAction.Escalate)]
     [InlineData(AlertState.Acknowledged, AlertAction.Cancel)]  // terminal states are final
     [InlineData(AlertState.Cancelled, AlertAction.Acknowledge)]
     [InlineData(AlertState.Superseded, AlertAction.Send)]

@@ -141,6 +141,32 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
     }
 
     [Fact]
+    public async Task An_alert_the_link_never_delivered_escalates_and_a_late_delivery_is_recorded()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var incident = await CreateIncidentAsync();
+        await using var scope = fx.App.Services.CreateAsyncScope();
+        var alerts = scope.ServiceProvider.GetRequiredService<AlertService>();
+        // Raised but never sent: the crew has no device, or the broker is down.
+        var queued = (await alerts.RaiseAsync(incident, "BRAVO", AlertLevel.Warning, "BRAVO WARNING: test", 20, ct)).Alert;
+
+        var escalated = await alerts.EscalateOverdueAsync(incident, TimeSpan.Zero, ct);
+        var e = Assert.Single(escalated, a => a.Id == queued.Id);
+        Assert.Equal(Engine.Workflow.AlertState.Escalated, e.State);
+        Assert.Null(e.SentAt);
+
+        // The link gets through later: the first send is stamped, the state stays escalated.
+        await alerts.MarkSentAsync(queued.Id, ct);
+        var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
+        var after = await db.Alerts.AsNoTracking().SingleAsync(a => a.Id == queued.Id, ct);
+        Assert.Equal(Engine.Workflow.AlertState.Escalated, after.State);
+        Assert.NotNull(after.SentAt);
+        Assert.Equal(1, await db.AuditEvents.CountAsync(x => x.AlertId == queued.Id && x.Type == "alert.sent", ct));
+        var escalation = await db.AuditEvents.AsNoTracking().SingleAsync(x => x.AlertId == queued.Id && x.Type == "alert.escalated", ct);
+        Assert.False(escalation.Details!.RootElement.GetProperty("details").GetProperty("delivered").GetBoolean());
+    }
+
+    [Fact]
     public async Task Device_ack_by_link_sequence_is_idempotent()
     {
         var ct = TestContext.Current.CancellationToken;
@@ -149,9 +175,11 @@ public sealed class WorkflowTests(LookoutAppFixture fx)
         await using var scope = fx.App.Services.CreateAsyncScope();
         var alerts = scope.ServiceProvider.GetRequiredService<AlertService>();
 
-        Assert.NotNull(await alerts.AcknowledgeFromDeviceAsync(incident, "ALPHA", alert.LinkSeq, ct));
-        Assert.Null(await alerts.AcknowledgeFromDeviceAsync(incident, "ALPHA", alert.LinkSeq, ct)); // QoS 1 duplicate
+        Assert.NotNull(await alerts.AcknowledgeFromDeviceAsync(incident, "ALPHA", alert.LinkSeq, ct, "300434060012345"));
+        Assert.Null(await alerts.AcknowledgeFromDeviceAsync(incident, "ALPHA", alert.LinkSeq, ct, "300434060012345")); // QoS 1 duplicate
         var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
+        // The audit trail names the device that answered, not just the crew.
+        Assert.Equal("device-300434060012345", (await db.AuditEvents.AsNoTracking().SingleAsync(e => e.AlertId == alert.Id && e.Type == "alert.acknowledged", ct)).Actor);
         Assert.Equal(1, await db.AuditEvents.CountAsync(e => e.AlertId == alert.Id && e.Type == "alert.ack-ignored", ct));
     }
 

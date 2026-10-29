@@ -103,6 +103,19 @@ public sealed class AuditEvent
     public JsonDocument? Details { get; set; }
 }
 
+/// <summary>
+/// A crew device on the link (a satellite messenger; in SBD terms, a modem IMEI) and the one
+/// incident and crew it reports for. Reassigning a device moves it; it is never in two places.
+/// </summary>
+public sealed class DeviceRecord
+{
+    public required string DeviceId { get; set; }
+    public Guid IncidentId { get; set; }
+    public required string CrewId { get; set; }
+    public DateTimeOffset AssignedAt { get; set; }
+    public required string AssignedBy { get; set; }
+}
+
 /// <summary>A crew phone's Web Push subscription, valid for one incident and one crew.</summary>
 public sealed class PushSubscriptionRecord
 {

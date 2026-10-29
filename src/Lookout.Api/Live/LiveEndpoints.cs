@@ -70,11 +70,16 @@ public static class LiveEndpoints
             var crews = await db.Crews.AsNoTracking().Where(c => c.IncidentId == id).OrderBy(c => c.CrewId).ToListAsync(ct);
             var routes = await db.EscapeRoutes.AsNoTracking().Where(r => r.IncidentId == id).OrderBy(r => r.RouteId).ToListAsync(ct);
             var zones = await db.SafetyZones.AsNoTracking().Where(z => z.IncidentId == id).OrderBy(z => z.ZoneId).ToListAsync(ct);
+            var devices = await db.Devices.AsNoTracking().Where(d => d.IncidentId == id).ToListAsync(ct);
             return Results.Ok(new
             {
                 i.Id, i.ScenarioId, i.Name, i.StartedAt, i.ClockRate, Status = i.Status.ToString().ToLowerInvariant(),
                 WindSource = i.WindSource.ToString().ToLowerInvariant(),
-                Crews = crews.Select(c => new { Id = c.CrewId, c.Name, Route = c.RouteId, Routes = new[] { c.RouteId }.Concat(c.AlternateRouteIds), c.Size, c.Pace }),
+                Crews = crews.Select(c => new
+                {
+                    Id = c.CrewId, c.Name, Route = c.RouteId, Routes = new[] { c.RouteId }.Concat(c.AlternateRouteIds), c.Size, c.Pace,
+                    Devices = devices.Where(d => d.CrewId == c.CrewId).Select(d => d.DeviceId).Order(),
+                }),
                 Routes = routes.Select(RouteDto.From),
                 SafetyZones = zones.Select(ZoneDto.From),
             });
@@ -147,6 +152,48 @@ public static class LiveEndpoints
             }
             return Results.NoContent();
         }).RequireAuthorization(Policies.Field);
+
+        // Device registry: which link device (modem IMEI, or a simulator id) reports for which crew.
+        api.MapPut("/{id:guid}/crews/{crewId}/devices/{deviceId}", async (Guid id, string crewId, string deviceId, LookoutDb db,
+            IncidentSignals signals, TimeProvider clock, HttpContext http, CancellationToken ct) =>
+        {
+            if (!Link.Topics.IsValidDeviceId(deviceId))
+                return Results.Problem("Device ids are 3 to 32 letters, digits or dashes.", statusCode: StatusCodes.Status400BadRequest);
+            crewId = crewId.ToUpperInvariant();
+            if (!await db.Crews.AnyAsync(c => c.IncidentId == id && c.CrewId == crewId, ct)) throw new NotFoundException($"Crew {crewId}");
+            var actor = Actor.From(http.User);
+            var now = clock.GetUtcNow();
+            var device = await db.Devices.SingleOrDefaultAsync(d => d.DeviceId == deviceId, ct);
+            var from = device is null ? null : new { device.IncidentId, device.CrewId };
+            if (device is null) db.Devices.Add(device = new DeviceRecord { DeviceId = deviceId, IncidentId = id, CrewId = crewId, AssignedAt = now, AssignedBy = actor.Name });
+            else { device.IncidentId = id; device.CrewId = crewId; device.AssignedAt = now; device.AssignedBy = actor.Name; }
+            db.AuditEvents.Add(new AuditEvent
+            {
+                Time = now, IncidentId = id, CrewId = crewId, Type = "device.assigned", Actor = actor.Name, Role = actor.Role,
+                Details = System.Text.Json.JsonSerializer.SerializeToDocument(new { deviceId, from }),
+            });
+            await db.SaveChangesAsync(ct);
+            signals.Post(new DevicesChanged(id));
+            return Results.Ok(new { deviceId, incidentId = id, crewId });
+        }).RequireAuthorization(Policies.Command);
+
+        api.MapDelete("/{id:guid}/crews/{crewId}/devices/{deviceId}", async (Guid id, string crewId, string deviceId, LookoutDb db,
+            IncidentSignals signals, TimeProvider clock, HttpContext http, CancellationToken ct) =>
+        {
+            crewId = crewId.ToUpperInvariant();
+            var device = await db.Devices.SingleOrDefaultAsync(d => d.DeviceId == deviceId && d.IncidentId == id && d.CrewId == crewId, ct)
+                ?? throw new NotFoundException($"Device {deviceId} on crew {crewId}");
+            var actor = Actor.From(http.User);
+            db.Devices.Remove(device);
+            db.AuditEvents.Add(new AuditEvent
+            {
+                Time = clock.GetUtcNow(), IncidentId = id, CrewId = crewId, Type = "device.unassigned", Actor = actor.Name, Role = actor.Role,
+                Details = System.Text.Json.JsonSerializer.SerializeToDocument(new { deviceId }),
+            });
+            await db.SaveChangesAsync(ct);
+            signals.Post(new DevicesChanged(id));
+            return Results.NoContent();
+        }).RequireAuthorization(Policies.Command);
 
         api.MapGet("/{id:guid}/fixes", async (Guid id, string crewId, int? limit, LookoutDb db, CancellationToken ct) =>
             await db.CrewFixes.AsNoTracking().Where(f => f.IncidentId == id && f.CrewId == crewId)

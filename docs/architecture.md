@@ -38,7 +38,7 @@ Short records of the choices that shape Lookout, why they were made, and what th
 
 **Decision.** Positions are 16 bytes, acknowledgements 8, alerts at most 270, in fixed big-endian layouts. There is no CBOR or protobuf on the crew link.
 
-**Why.** Iridium SBD allows 340 bytes up and 270 down, and bills in small increments. A fixed layout is the smallest encoding and needs no schema negotiation on a device. The crew is identified by the topic, as by the modem IMEI in SBD, not repeated in every message.
+**Why.** Iridium SBD allows 340 bytes up and 270 down, and bills in small increments. A fixed layout is the smallest encoding and needs no schema negotiation on a device. The device is identified by the topic, as by the modem IMEI in SBD, not repeated in every message; the server's device registry maps it to a crew (decision 16).
 
 **Cost.** Changing a layout needs a type byte or a version, and devices must be updated together.
 
@@ -108,7 +108,7 @@ Short records of the choices that shape Lookout, why they were made, and what th
 
 **Why.** It makes the role model testable and demonstrable without an identity provider. Swapping in Entra ID or another OIDC issuer changes configuration, not authorization code.
 
-**Scope.** Crew tokens carry the incident they were issued for, because crew ids such as ALPHA repeat across incidents; every incident endpoint and the live hub refuse a crew token from another incident. On the broker, the server and the field simulator have separate accounts, and an ACL lets a real crew device publish only on its own crew's uplink and read only its own crew's downlink. That broker rule is per crew id, not per incident: scoping devices to an incident needs a per-device identity (such as the modem IMEI) in the topic layout, which is not built yet. The HTTP side is incident-scoped.
+**Scope.** Crew tokens carry the incident they were issued for, because crew ids such as ALPHA repeat across incidents; every incident endpoint and the live hub refuse a crew token from another incident. On the broker, the server and the field simulator have separate accounts, and an ACL confines a real device to its own two topics. The device registry (decision 16) then confines that device to one incident and crew, so both the HTTP side and the link are incident-scoped.
 
 **Cost.** Dev auth must never be enabled on a reachable deployment. Docker compose binds every port to localhost, the API logs a warning whenever dev sign-in is on outside Development, and startup refuses to run live mode without a signing key of at least 32 characters.
 
@@ -128,3 +128,11 @@ Short records of the choices that shape Lookout, why they were made, and what th
 
 **Cost.** Push depends on the browser vendor's push service and, on iPhone, on the web app being added to the home screen. Delivery is not confirmed by the push protocol; the acknowledgement workflow is what confirms the crew saw the warning.
 
+
+## 16. Link topics belong to devices; a registry maps them to crews
+
+**Decision.** Each link device has its own topics, `lookout/dev/{device}/up` and `lookout/dev/{device}/down`, where the device id stands in for the modem IMEI. The incident commander assigns a device to a crew in an incident, which writes a row in `devices` and an audit event. The live runner keeps the registry in memory, reloads it when an assignment changes, and drops uplinks from devices it does not know. Alerts for a crew go to every device assigned to it.
+
+**Why.** Crew ids such as ALPHA repeat across incidents, so topics named after crews could not keep one incident's device from reporting into another. A real satellite messenger also has a fixed identity and is handed between crews and incidents; that hand-over is an assignment, recorded like any other command. The broker ACL can then be a single pattern per device login.
+
+**Cost.** A device must be assigned before its reports count; an unassigned device's fixes are dropped, and logged once. Reassigning a device mid-incident moves its future reports immediately, so assignment is restricted to the incident commander.

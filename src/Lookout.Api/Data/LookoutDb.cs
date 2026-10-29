@@ -12,6 +12,7 @@ public sealed class LookoutDb(DbContextOptions<LookoutDb> options) : DbContext(o
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<CrewFix> CrewFixes => Set<CrewFix>();
     public DbSet<PushSubscriptionRecord> PushSubscriptions => Set<PushSubscriptionRecord>();
+    public DbSet<DeviceRecord> Devices => Set<DeviceRecord>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -74,6 +75,16 @@ public sealed class LookoutDb(DbContextOptions<LookoutDb> options) : DbContext(o
             e.Property(x => x.Role).HasMaxLength(16);
             e.Property(x => x.Details).HasColumnType("jsonb");
             e.HasIndex(x => new { x.IncidentId, x.Time });
+        });
+
+        b.Entity<DeviceRecord>(e =>
+        {
+            e.ToTable("devices");
+            e.HasKey(x => x.DeviceId);
+            e.Property(x => x.DeviceId).HasMaxLength(32);
+            e.Property(x => x.AssignedBy).HasMaxLength(64);
+            e.HasIndex(x => new { x.IncidentId, x.CrewId });
+            e.HasOne<CrewRecord>().WithMany().HasForeignKey(x => new { x.IncidentId, x.CrewId });
         });
 
         b.Entity<PushSubscriptionRecord>(e =>

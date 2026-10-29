@@ -211,6 +211,34 @@ namespace Lookout.Api.Data.Migrations
                     b.ToTable("crews", (string)null);
                 });
 
+            modelBuilder.Entity("Lookout.Api.Data.DeviceRecord", b =>
+                {
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset>("AssignedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AssignedBy")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("CrewId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("IncidentId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("DeviceId");
+
+                    b.HasIndex("IncidentId", "CrewId");
+
+                    b.ToTable("devices", (string)null);
+                });
+
             modelBuilder.Entity("Lookout.Api.Data.EscapeRouteRecord", b =>
                 {
                     b.Property<Guid>("IncidentId")
@@ -368,6 +396,15 @@ namespace Lookout.Api.Data.Migrations
                     b.HasOne("Lookout.Api.Data.Incident", null)
                         .WithMany()
                         .HasForeignKey("IncidentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Lookout.Api.Data.DeviceRecord", b =>
+                {
+                    b.HasOne("Lookout.Api.Data.CrewRecord", null)
+                        .WithMany()
+                        .HasForeignKey("IncidentId", "CrewId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

@@ -31,6 +31,8 @@ public static class AlertStateMachine
         [(AlertState.Queued, AlertAction.Send)] = AlertState.Sent,
         [(AlertState.Queued, AlertAction.Supersede)] = AlertState.Superseded,
         [(AlertState.Queued, AlertAction.Cancel)] = AlertState.Cancelled,
+        // Never delivered (no link device, broker down): the IC must hear about it just as for an unanswered one.
+        [(AlertState.Queued, AlertAction.Escalate)] = AlertState.Escalated,
 
         [(AlertState.Sent, AlertAction.Acknowledge)] = AlertState.Acknowledged,
         [(AlertState.Sent, AlertAction.Escalate)] = AlertState.Escalated,

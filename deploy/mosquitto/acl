@@ -1,23 +1,26 @@
 # Who may publish and subscribe to what. Anything not granted here is denied.
+#
+# Crew devices are addressed by device id (in Iridium SBD, the modem IMEI), not by crew or incident:
+#   lookout/dev/{device}/up     device -> server: 16-byte positions, 8-byte acks
+#   lookout/dev/{device}/down   server -> device: alerts of at most 270 bytes
+# The server's device registry says which incident and crew each device reports for, and drops
+# anything from a device it does not know. So a device login is confined twice: by this ACL to its
+# own two topics, and by the registry to one incident and crew.
 
-# The Lookout server: reads every uplink, drone survey and weather message; writes every downlink.
+# The Lookout server: every device uplink, every drone survey and weather station; every downlink.
 user lookout
-topic read lookout/+/crew/+/up
+topic read lookout/dev/+/up
+topic write lookout/dev/+/down
 topic read lookout/+/drone/front
 topic read lookout/+/wx
-topic write lookout/+/crew/+/down
 
 # The field simulator plays every crew device, the drone and the weather station at once.
 user field
-topic write lookout/+/crew/+/up
-topic read lookout/+/crew/+/down
+topic write lookout/dev/+/up
+topic read lookout/dev/+/down
 topic write lookout/+/drone/front
 topic write lookout/+/wx
 
-# A real crew device would log in as its own user, named after its crew (for example ALPHA),
-# and could only send on its own uplink and hear its own downlink. %u is the username.
-# Limitation: the "+" matches any incident, so this scopes a device to its crew id, not to an
-# incident. Scoping by incident needs a per-device identity in the topic (for example the modem's
-# IMEI) mapped to an incident on the server; not built yet.
-pattern write lookout/+/crew/%u/up
-pattern read lookout/+/crew/%u/down
+# A real device logs in with its device id as username and can use only its own two topics.
+pattern write lookout/dev/%u/up
+pattern read lookout/dev/%u/down

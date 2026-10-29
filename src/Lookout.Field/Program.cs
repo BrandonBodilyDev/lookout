@@ -44,13 +44,24 @@ using var http = new HttpClient { BaseAddress = new Uri(apiBase) };
 var (incidentId, startedAt, rate) = await ConnectIncidentAsync();
 Log($"Incident {incidentId}: {scenario.Name}, {rate}x real time, started {startedAt:HH:mm:ss}Z");
 
+// Each crew carries one simulated device. A real one would be a satellite messenger registered by its
+// IMEI; here the id is derived from the incident so separate runs never share a device.
+var deviceOf = scenario.Crews.ToDictionary(c => c.Id, c => $"SIM-{incidentId:N}"[..12] + $"-{c.Id}");
+var crewOf = deviceOf.ToDictionary(kv => kv.Value, kv => kv.Key);
+foreach (var (crewId, deviceId) in deviceOf)
+{
+    var res = await http.PutAsync($"/api/incidents/{incidentId}/crews/{crewId}/devices/{deviceId}", null, ct);
+    res.EnsureSuccessStatusCode();
+}
+Log($"Registered devices: {string.Join(", ", deviceOf.Values)}");
+
 // 2. MQTT: listen on every crew's downlink.
 await using var link = new MqttConnection(mqtt, "lookout-field", Log);
 var pendingAcks = new List<(DateTimeOffset Due, string Crew, ushort Seq)>();
 var gate = new object();
 link.OnMessage = (topic, payload) =>
 {
-    if (Topics.Parse(topic) is not { Path: ["crew", var crewId, "down"] }) return Task.CompletedTask;
+    if (Topics.ParseDevice(topic) is not { Up: false } dev || !crewOf.TryGetValue(dev.DeviceId, out var crewId)) return Task.CompletedTask;
     var crew = scenario.Crews.Single(c => c.Id == crewId);
     var t = Now();
     if (crew.InCommsGap(t))
@@ -64,7 +75,7 @@ link.OnMessage = (topic, payload) =>
         lock (gate) pendingAcks.Add((DateTimeOffset.UtcNow + ackDelay, crewId, alert.Sequence));
     return Task.CompletedTask;
 };
-await link.StartAsync(scenario.Crews.Select(c => Topics.Downlink(incidentId, c.Id)), ct);
+await link.StartAsync(deviceOf.Values.Select(Topics.DeviceDownlink), ct);
 
 // Camera mode: a nadir survey camera parked over the incident area. At 1800 m above ground with a
 // 71.5 degree lens its footprint is about 2.6 x 1.9 km. That is an incident-awareness aircraft or a
@@ -103,7 +114,7 @@ while (!ct.IsCancellationRequested)
             var (fixT, pos) = crew.Fixes[i];
             var (lon, lat) = frame.ToLonLat(pos);
             var report = new PositionReport(++seq[crew.Id] , startedAt.AddMinutes(fixT / rate), lat, lon, (int)Math.Max(5, 100 - fixT / 2));
-            if (!await link.TryPublishAsync(Topics.Uplink(incidentId, crew.Id), WireFormat.EncodePosition(report), ct)) break;
+            if (!await link.TryPublishAsync(Topics.DeviceUplink(deviceOf[crew.Id]), WireFormat.EncodePosition(report), ct)) break;
             published[crew.Id] = i;
         }
     }
@@ -152,7 +163,7 @@ while (!ct.IsCancellationRequested)
     foreach (var a in due)
     {
         if (scenario.Crews.Single(c => c.Id == a.Crew).InCommsGap(t)) { Log($"{a.Crew} ack #{a.Seq} lost (comms gap)"); continue; }
-        await link.TryPublishAsync(Topics.Uplink(incidentId, a.Crew), WireFormat.EncodeAck(new AckReport(a.Seq, DateTimeOffset.UtcNow)), ct);
+        await link.TryPublishAsync(Topics.DeviceUplink(deviceOf[a.Crew]), WireFormat.EncodeAck(new AckReport(a.Seq, DateTimeOffset.UtcNow)), ct);
         Log($"{a.Crew} acknowledged #{a.Seq}");
     }
 

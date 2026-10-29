@@ -39,7 +39,7 @@ export function ClockAndWind(props: {
   );
 }
 
-export function CrewCard({ crew, meta }: { crew: CrewView; meta: { name: string; route: string; size: number; pace: string } }) {
+export function CrewCard({ crew, meta }: { crew: CrewView; meta: { name: string; route: string; size: number; pace: string; devices?: string[] } }) {
   const stale = (crew.fixAgeMin ?? 0) >= 5;
   let headline: string;
   if (crew.inSafetyZone) headline = "In safety zone";
@@ -61,6 +61,11 @@ export function CrewCard({ crew, meta }: { crew: CrewView; meta: { name: string;
         <LevelBadge level={crew.level} />
       </div>
       <div className="crew-headline">{headline}</div>
+      {meta.devices && (
+        meta.devices.length > 0
+          ? <p className="muted devices">Link: {meta.devices.join(", ")}</p>
+          : <p className="devices stale">No link device assigned: link alerts wait until one is.</p>
+      )}
       {!crew.inSafetyZone && (
         <dl className="crew-stats">
           <div><dt>Margin</dt><dd>{crew.marginMin !== null ? `${crew.marginMin.toFixed(0)} min` : "–"}</dd></div>

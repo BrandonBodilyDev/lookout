@@ -53,6 +53,9 @@ public sealed class LiveRunner(
     private readonly Channel<(string Topic, byte[] Payload)> _inbox = Channel.CreateUnbounded<(string, byte[])>();
     private readonly Dictionary<Guid, DateTimeOffset> _nwsFetched = new();
     private DateTimeOffset _nextCot;
+    /// <summary>Device id to the incident and crew it reports for, from the devices table.</summary>
+    private Dictionary<string, (Guid Incident, string Crew)> _devices = new();
+    private readonly HashSet<string> _unknownDevicesLogged = [];
     private MqttConnection? _mqtt;
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -63,7 +66,7 @@ public sealed class LiveRunner(
             {
                 OnMessage = (topic, payload) => { _inbox.Writer.TryWrite((topic, payload)); return Task.CompletedTask; },
             };
-            await _mqtt.StartAsync([Topics.AllUplinks, Topics.AllDroneFronts, Topics.AllWeather], ct);
+            await _mqtt.StartAsync([Topics.AllDeviceUplinks, Topics.AllDroneFronts, Topics.AllWeather], ct);
         }
         else
         {
@@ -71,6 +74,7 @@ public sealed class LiveRunner(
         }
 
         await LoadRunningIncidentsAsync(ct);
+        await Guard("loading the device directory", () => ReloadDevicesAsync(ct), ct);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(options.TickSeconds));
         do
         {
@@ -155,6 +159,18 @@ public sealed class LiveRunner(
         return rt;
     }
 
+    private async Task ReloadDevicesAsync(CancellationToken ct)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<LookoutDb>();
+        _devices = (await db.Devices.AsNoTracking().ToListAsync(ct))
+            .ToDictionary(d => d.DeviceId, d => (d.IncidentId, d.CrewId));
+        _unknownDevicesLogged.Clear();
+    }
+
+    private IEnumerable<string> DevicesOf(Guid incident, string crewId) =>
+        _devices.Where(d => d.Value.Incident == incident && d.Value.Crew == crewId).Select(d => d.Key);
+
     private static async Task ReloadLayoutAsync(IncidentRuntime rt, LookoutDb db, CancellationToken ct)
     {
         var id = rt.Incident.Id;
@@ -179,6 +195,9 @@ public sealed class LiveRunner(
             case AlertClosed c when _incidents.TryGetValue(s.IncidentId, out var rt2):
                 rt2.Governor.Clear(c.CrewId, c.AlertId);
                 break;
+            case DevicesChanged:
+                await ReloadDevicesAsync(ct);
+                break;
             case UplinkReceived u when _incidents.TryGetValue(s.IncidentId, out var rt3):
                 await HandleUplinkAsync(rt3, u.CrewId, u.Payload, ct);
                 break;
@@ -190,15 +209,26 @@ public sealed class LiveRunner(
 
     private async Task HandleMessageAsync(string topic, byte[] payload, CancellationToken ct)
     {
+        // Crew devices: the registry, not the topic, says which incident and crew a device reports for.
+        if (Topics.ParseDevice(topic) is { Up: true } dev)
+        {
+            if (!_devices.TryGetValue(dev.DeviceId, out var owner))
+            {
+                if (_unknownDevicesLogged.Add(dev.DeviceId))
+                    log.LogWarning("Uplink from unregistered device {Device} dropped; assign it to a crew first", dev.DeviceId);
+                return;
+            }
+            var crewRt = _incidents.GetValueOrDefault(owner.Incident) ?? await LoadAsync(owner.Incident, ct);
+            if (crewRt is not null) await HandleUplinkAsync(crewRt, owner.Crew, payload, ct, dev.DeviceId);
+            return;
+        }
+
         if (Topics.Parse(topic) is not { } t) return;
         var rt = _incidents.GetValueOrDefault(t.Incident) ?? await LoadAsync(t.Incident, ct);
         if (rt is null) return;
 
         switch (t.Path)
         {
-            case ["crew", var crewId, "up"]:
-                await HandleUplinkAsync(rt, crewId, payload, ct);
-                break;
             case ["drone", "front"]:
                 rt.UpdateFront(SurveyJson.Decode<DroneFrontMessage>(payload));
                 break;
@@ -215,7 +245,7 @@ public sealed class LiveRunner(
         }
     }
 
-    private async Task HandleUplinkAsync(IncidentRuntime rt, string crewId, byte[] payload, CancellationToken ct)
+    private async Task HandleUplinkAsync(IncidentRuntime rt, string crewId, byte[] payload, CancellationToken ct, string? deviceId = null)
     {
         if (rt.Crews.All(c => c.CrewId != crewId)) return;
         await using var scope = scopes.CreateAsyncScope();
@@ -247,7 +277,7 @@ public sealed class LiveRunner(
 
             case AckReport a:
                 var alerts = scope.ServiceProvider.GetRequiredService<AlertService>();
-                var acked = await alerts.AcknowledgeFromDeviceAsync(rt.Incident.Id, crewId, a.AlertSequence, ct);
+                var acked = await alerts.AcknowledgeFromDeviceAsync(rt.Incident.Id, crewId, a.AlertSequence, ct, deviceId);
                 if (acked is not null)
                 {
                     rt.Governor.Clear(crewId, acked.Id);
@@ -349,11 +379,20 @@ public sealed class LiveRunner(
 
         foreach (var tx in rt.Governor.Due(t * 60))
         {
-            if (_mqtt is not null && !await _mqtt.TryPublishAsync(Topics.Downlink(rt.Incident.Id, tx.CrewId), tx.Payload, ct))
+            if (_mqtt is not null)
             {
-                rt.Governor.Failed(tx); // broker unreachable: due again next tick
-                Telemetry.DownlinkFailures.Add(1);
-                continue;
+                // Every device the crew carries gets it; a crew with no device has no link, so the alert
+                // stays queued and is retried; if it needs an ack it escalates to the IC after the ack timeout.
+                var devices = DevicesOf(rt.Incident.Id, tx.CrewId).ToList();
+                var sentToAny = false;
+                foreach (var device in devices)
+                    sentToAny |= await _mqtt.TryPublishAsync(Topics.DeviceDownlink(device), tx.Payload, ct);
+                if (!sentToAny)
+                {
+                    rt.Governor.Failed(tx); // broker unreachable or no device: due again next tick
+                    if (devices.Count > 0) Telemetry.DownlinkFailures.Add(1); // count broker failures, not crews without a device
+                    continue;
+                }
             }
             Telemetry.DownlinkBytes.Add(tx.Payload.Length);
             rt.Governor.Delivered(tx);

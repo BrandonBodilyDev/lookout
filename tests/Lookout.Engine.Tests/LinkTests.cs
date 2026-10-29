@@ -50,13 +50,25 @@ public class WireFormatTests
     }
 
     [Fact]
-    public void Topics_parse_back_to_incident_and_path()
+    public void Device_topics_parse_and_reject_wildcards()
+    {
+        Assert.Equal(("300434061234560", true), Topics.ParseDevice(Topics.DeviceUplink("300434061234560")));
+        Assert.Equal(("SIM-ab12cd34-ALPHA", false), Topics.ParseDevice(Topics.DeviceDownlink("SIM-ab12cd34-ALPHA")));
+        Assert.Null(Topics.ParseDevice("lookout/dev/+/up"));
+        Assert.Null(Topics.ParseDevice("lookout/dev/a#b/up"));
+        Assert.False(Topics.IsValidDeviceId("ab"));
+        Assert.False(Topics.IsValidDeviceId("has/slash"));
+    }
+
+    [Fact]
+    public void Station_topics_parse_back_to_incident_and_path()
     {
         var id = Guid.NewGuid();
-        var parsed = Topics.Parse(Topics.Uplink(id, "ALPHA"));
+        var parsed = Topics.Parse(Topics.DroneFront(id));
         Assert.NotNull(parsed);
         Assert.Equal(id, parsed.Value.Incident);
-        Assert.Equal(["crew", "ALPHA", "up"], parsed.Value.Path);
+        Assert.Equal(["drone", "front"], parsed.Value.Path);
+        Assert.Null(Topics.Parse(Topics.DeviceUplink("SIM-1-ALPHA")));
     }
 }
 
